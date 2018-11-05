@@ -6,7 +6,6 @@ import ParInstant
 import ErrM
 
 import Control.Monad.Writer
-import Control.Monad.Except
 import Control.Monad.State
 
 import Data.List
@@ -19,10 +18,11 @@ import System.FilePath
 import System.IO
 import System.Process
 
-type Label = String
 type Loc = Int
+type Label = String
+type Code = [String]
 type Store = M.Map Label Int
-type WS a = WriterT [String] (StateT (Store, Int) IO) a
+type WS a = WriterT Code (StateT (Store, Loc) IO) a
 
 
 getStore :: WS Store
@@ -84,6 +84,14 @@ transStmt (SExp exp) = do
 
 transExp :: Exp -> WS Label
 
+transExp (ExpAdd exp1 exp2) = transOp "add nsw" exp1 exp2
+
+transExp (ExpSub exp1 exp2) = transOp "sub nsw" exp1 exp2
+
+transExp (ExpMul exp1 exp2) = transOp "mul nsw" exp1 exp2
+
+transExp (ExpDiv exp1 exp2) = transOp "sdiv" exp1 exp2
+
 transExp (ExpLit integer) = return $ show integer
 
 transExp (ExpVar ident) = do
@@ -92,36 +100,18 @@ transExp (ExpVar ident) = do
   tell [next ++ " = load i32, i32* %" ++ show loc ++ ", align 4"]
   return next
 
-transExp (ExpAdd exp1 exp2) = do
+
+transOp :: String -> Exp -> Exp -> WS Label
+
+transOp op exp1 exp2 = do
   label1 <- transExp exp1
   label2 <- transExp exp2
   next   <- nextLabel
-  tell [next ++ " = add nsw i32 " ++ label1 ++ ", " ++ label2]
-  return next
-
-transExp (ExpSub exp1 exp2) = do
-  label1 <- transExp exp1
-  label2 <- transExp exp2
-  next   <- nextLabel
-  tell [next ++ " = sub nsw i32 " ++ label1 ++ ", " ++ label2]
-  return next
-
-transExp (ExpMul exp1 exp2) = do
-  label1 <- transExp exp1
-  label2 <- transExp exp2
-  next   <- nextLabel
-  tell [next ++ " = mul nsw i32 " ++ label1 ++ ", " ++ label2]
-  return next
-
-transExp (ExpDiv exp1 exp2) = do
-  label1 <- transExp exp1
-  label2 <- transExp exp2
-  next   <- nextLabel
-  tell [next ++ " = sdiv i32 " ++ label1 ++ ", " ++ label2]
+  tell [next ++ " = " ++ op ++ " i32 " ++ label1 ++ ", " ++ label2]
   return next
 
 
-run :: Program -> IO [String]
+run :: Program -> IO Code
 run prog = do
   ((_, out), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
   return out
@@ -131,8 +121,8 @@ printErr :: String -> IO ()
 printErr msg = hPutStr stderr $ "Error: " ++ msg ++ "\n"
 
 
-pack :: [String] -> String -> Int -> Int -> [String]
-pack out name stack locals = prelude ++ out ++ postlude
+pack :: Code -> Code
+pack out = prelude ++ out ++ postlude
   where
     prelude = [
       "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1",
@@ -156,7 +146,7 @@ main = do
         (Bad msg) -> printErr msg
         (Ok tree) -> do
           contents <- run tree
-          writeFile clangName $ intercalate "\n" $ pack contents name 1000 1000
+          writeFile clangName $ intercalate "\n" $ pack contents
           callCommand $ "llvm-as " ++ clangName
             where
               name = dropExtension f
