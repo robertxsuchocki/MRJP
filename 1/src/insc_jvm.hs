@@ -19,24 +19,27 @@ import System.FilePath
 import System.IO
 import System.Process
 
-type Loc = Integer
-type Store = M.Map String Integer
+type Loc = Int
+type Store = M.Map String Int
 type WS a = WriterT [String] (StateT Store IO) a
 
 
-alloc :: WS Loc
-alloc = do
+nextLocation :: WS Loc
+nextLocation = do
   store <- get
-  if (M.null store)
-    then return 1
-    else let (name, loc) = M.findMax store in return $ loc + 1
+  return $ (M.size store) + 1
 
 
 transIdent :: Ident -> WS Loc
 
 transIdent (Ident name) = do
   store <- get
-  return $ fromMaybe 1 (M.lookup name store)
+  let loc = fromMaybe 0 (M.lookup name store)
+  if loc /= 0
+    then return loc
+    else do
+      new <- nextLocation
+      return new
 
 
 transProgram :: Program -> WS ()
@@ -50,46 +53,46 @@ transProgram (Prog (s:ss)) = do
 
 transStmt :: Stmt -> WS ()
 
-transStmt (SAss (Ident name) expr) = do
-  loc <- alloc
-  transExp expr
+transStmt (SAss ident@(Ident name) exp) = do
+  loc   <- transIdent ident
+  transExp exp
   modify (M.insert name loc)
-  tell $ ["istore_" ++ show loc]
+  tell $ ["istore " ++ show loc]
 
-transStmt (SExp expr) = do
+transStmt (SExp exp) = do
   tell $ ["getstatic java/lang/System/out Ljava/io/PrintStream;"]
-  transExp expr
+  transExp exp
   tell $ ["invokevirtual java/io/PrintStream/println(I)V"]
 
 
 transExp :: Exp -> WS ()
-
-transExp (ExpAdd exp1 exp2) = do
-  value1 <- transExp exp1
-  value2 <- transExp exp2
-  tell ["iadd"]
-
-transExp (ExpSub expr1 expr2) = do
-  value1 <- transExp expr1
-  value2 <- transExp expr2
-  tell ["isub"]
-
-transExp (ExpMul expr1 expr2) = do
-  value1 <- transExp expr1
-  value2 <- transExp expr2
-  tell ["imul"]
-
-transExp (ExpDiv expr1 expr2) = do
-  value1 <- transExp expr1
-  value2 <- transExp expr2
-  tell ["idiv"]
 
 transExp (ExpLit integer) = do
   tell ["bipush " ++ show integer]
 
 transExp (ExpVar ident) = do
   loc <- transIdent ident
-  tell ["iload_" ++ show loc]
+  tell ["iload " ++ show loc]
+
+transExp (ExpAdd exp1 exp2) = do
+  transExp exp1
+  transExp exp2
+  tell ["iadd"]
+
+transExp (ExpSub exp1 exp2) = do
+  transExp exp1
+  transExp exp2
+  tell ["isub"]
+
+transExp (ExpMul exp1 exp2) = do
+  transExp exp1
+  transExp exp2
+  tell ["imul"]
+
+transExp (ExpDiv exp1 exp2) = do
+  transExp exp1
+  transExp exp2
+  tell ["idiv"]
 
 
 run :: Program -> IO [String]
@@ -102,16 +105,18 @@ printErr :: String -> IO ()
 printErr msg = hPutStr stderr $ "Error: " ++ msg ++ "\n"
 
 
-pack :: [String] -> String -> Integer -> Integer -> [String]
+pack :: [String] -> String -> Int -> Int -> [String]
 pack out name stack locals = prelude ++ out ++ postlude
   where
-    prelude = [".class public " ++ name,
-               ".super java/lang/Object",
-               ".method public static main([Ljava/lang/String;)V",
-               ".limit stack " ++ (show stack),
-               ".limit locals " ++ (show locals)]
-    postlude = ["return",
-                ".end method"]
+    prelude = [
+      ".class public " ++ name,
+      ".super java/lang/Object",
+      ".method public static main([Ljava/lang/String;)V",
+      ".limit stack " ++ (show stack),
+      ".limit locals " ++ (show locals)]
+    postlude = [
+      "return",
+      ".end method"]
 
 
 main :: IO ()
