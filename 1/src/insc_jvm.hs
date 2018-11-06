@@ -127,14 +127,13 @@ run :: FilePath -> Program -> IO ()
 
 run file prog = do
   ((_, out), state) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
-  writeFile filePath codeStr
+  let code = intercalate "\n" $ pack out name state
+  writeFile filePath code
   void $ runCommand command
     where
       filePath = dropExtension file ++ ".j"
       dirPath  = takeDirectory filePath
       name     = takeBaseName filePath
-      codeList = pack out name state
-      codeStr  = intercalate "\n" codeList
       command  = "java -jar lib/jasmin.jar -d " ++ dirPath ++ " " ++ filePath
 
 
@@ -144,8 +143,8 @@ main = do
   args <- getArgs
   case args of
     []    -> hPutStr stderr $ "Error: No file provided\n"
-    (f:_) -> do
-      code <- readFile f
+    (file:_) -> do
+      code <- readFile file
       case pProgram (myLexer code) of
         (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
-        (Ok tree) -> run tree
+        (Ok tree) -> run file tree

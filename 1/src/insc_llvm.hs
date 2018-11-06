@@ -129,16 +129,15 @@ pack out = prelude ++ out ++ postlude
       "declare i32 @printf(i8*, ...) #1"]
 
 
-run :: Program -> IO ()
+run :: FilePath -> Program -> IO ()
 
-run prog = do
-  ((_, ), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
-  writeFile filePath codeStr
+run file prog = do
+  ((_, out), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
+  let code = intercalate "\n" $ pack out
+  writeFile filePath code
   void $ runCommand command
     where
-      filePath = dropExtension f ++ ".ll"
-      codeList = pack contents
-      codeStr  = intercalate "\n" codeList
+      filePath = dropExtension file ++ ".ll"
       command  = "llvm-as " ++ filePath
 
 
@@ -148,8 +147,8 @@ main = do
   args <- getArgs
   case args of
     []    -> hPutStr stderr $ "Error: No file provided\n"
-    (f:_) -> do
-      code <- readFile f
+    (file:_) -> do
+      code <- readFile file
       case pProgram (myLexer code) of
         (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
-        (Ok tree) -> run tree
+        (Ok tree) -> run file tree
