@@ -21,23 +21,26 @@ import System.Process
 type Loc = Int
 type Label = String
 type Code = [String]
-type Store = M.Map Label Int
+type Store = M.Map Label Loc
 type WS a = WriterT Code (StateT (Store, Loc) IO) a
 
 
 getStore :: WS Store
+
 getStore = do
   (store, loc) <- get
   return store
 
 
 nextLabel :: WS Label
+
 nextLabel = do
   loc <- nextLocation
   return $ "%" ++ show loc
 
 
 nextLocation :: WS Loc
+
 nextLocation = do
   (store, loc) <- get
   let new = loc + 1
@@ -111,17 +114,8 @@ transOp op exp1 exp2 = do
   return next
 
 
-run :: Program -> IO Code
-run prog = do
-  ((_, out), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
-  return out
-
-
-printErr :: String -> IO ()
-printErr msg = hPutStr stderr $ "Error: " ++ msg ++ "\n"
-
-
 pack :: Code -> Code
+
 pack out = prelude ++ out ++ postlude
   where
     prelude = [
@@ -135,18 +129,27 @@ pack out = prelude ++ out ++ postlude
       "declare i32 @printf(i8*, ...) #1"]
 
 
+run :: Program -> IO ()
+
+run prog = do
+  ((_, ), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
+  writeFile filePath codeStr
+  void $ runCommand command
+    where
+      filePath = dropExtension f ++ ".ll"
+      codeList = pack contents
+      codeStr  = intercalate "\n" codeList
+      command  = "llvm-as " ++ filePath
+
+
 main :: IO ()
+
 main = do
   args <- getArgs
   case args of
-    []    -> printErr "No file provided"
+    []    -> hPutStr stderr $ "Error: No file provided\n"
     (f:_) -> do
       code <- readFile f
       case pProgram (myLexer code) of
-        (Bad msg) -> printErr msg
-        (Ok tree) -> do
-          contents <- run tree
-          writeFile fPath $ intercalate "\n" $ pack contents
-          void $ runCommand $ "llvm-as " ++ fPath
-            where
-              fPath = dropExtension f ++ ".ll"
+        (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
+        (Ok tree) -> run tree

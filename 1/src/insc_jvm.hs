@@ -21,18 +21,20 @@ import System.Process
 type Loc = Int
 type Label = String
 type Code = [String]
-type StackHeight = Int
 type Store = M.Map Label Loc
+type StackHeight = Int
 type WS a = WriterT Code (StateT (Store, StackHeight) IO) a
 
 
 getStore :: WS Store
+
 getStore = do
   (store, height) <- get
   return store
 
 
 nextLocation :: WS Loc
+
 nextLocation = do
   store <- getStore
   return $ (M.size store) + 1
@@ -86,7 +88,7 @@ transExp (ExpMul exp1 exp2) = transOp "imul" exp1 exp2 True
 
 transExp (ExpDiv exp1 exp2) = transOp "idiv" exp1 exp2 False
 
-transExp (ExpLit integer) = return (["bipush " ++ show integer], 1)
+transExp (ExpLit integer) = return (["ldc " ++ show integer], 1)
 
 transExp (ExpVar ident) = do
   loc <- transIdent ident
@@ -106,17 +108,8 @@ transOp op exp1 exp2 swap = do
       return (code ++ [op], height)
 
 
-run :: Program -> IO (Code, (Store, StackHeight))
-run prog = do
-  ((_, out), stack) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
-  return (out, stack)
-
-
-printErr :: String -> IO ()
-printErr msg = hPutStr stderr $ "Error: " ++ msg ++ "\n"
-
-
 pack :: Code -> String -> (Store, StackHeight) -> Code
+
 pack out name (store, height) = prelude ++ out ++ postlude
   where
     prelude = [
@@ -130,21 +123,29 @@ pack out name (store, height) = prelude ++ out ++ postlude
       ".end method"]
 
 
+run :: FilePath -> Program -> IO ()
+
+run file prog = do
+  ((_, out), state) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
+  writeFile filePath codeStr
+  void $ runCommand command
+    where
+      filePath = dropExtension file ++ ".j"
+      dirPath  = takeDirectory filePath
+      name     = takeBaseName filePath
+      codeList = pack out name state
+      codeStr  = intercalate "\n" codeList
+      command  = "java -jar lib/jasmin.jar -d " ++ dirPath ++ " " ++ filePath
+
+
 main :: IO ()
+
 main = do
   args <- getArgs
   case args of
-    []    -> printErr "No file provided"
+    []    -> hPutStr stderr $ "Error: No file provided\n"
     (f:_) -> do
       code <- readFile f
       case pProgram (myLexer code) of
-        (Bad msg) -> printErr msg
-        (Ok tree) -> do
-          (contents, store) <- run tree
-          writeFile fPath $ intercalate "\n" $ pack contents name store
-          void $ runCommand $ "java -jar lib/jasmin.jar -d " ++ dPath ++ " "
-                                ++ fPath
-            where
-              fPath = dropExtension f ++ ".j"
-              dPath = takeDirectory fPath
-              name = takeBaseName fPath
+        (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
+        (Ok tree) -> run tree
