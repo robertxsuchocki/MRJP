@@ -141,8 +141,10 @@ main = do
         (Bad msg) -> printErr msg
         (Ok tree) -> do
           (contents, store) <- run tree
-          writeFile jasminName $ intercalate "\n" $ pack contents name store
-          callCommand $ "java -jar lib/jasmin.jar " ++ jasminName
+          writeFile fPath $ intercalate "\n" $ pack contents name store
+          void $ runCommand $ "java -jar lib/jasmin.jar -d " ++ dPath ++ " "
+                                ++ fPath
             where
-              name = dropExtension f
-              jasminName = name ++ ".j"
+              fPath = dropExtension f ++ ".j"
+              dPath = takeDirectory fPath
+              name = takeBaseName fPath

@@ -146,8 +146,7 @@ main = do
         (Bad msg) -> printErr msg
         (Ok tree) -> do
           contents <- run tree
-          writeFile clangName $ intercalate "\n" $ pack contents
-          callCommand $ "llvm-as " ++ clangName
+          writeFile fPath $ intercalate "\n" $ pack contents
+          void $ runCommand $ "llvm-as " ++ fPath
             where
-              name = dropExtension f
-              clangName = name ++ ".ll"
+              fPath = dropExtension f ++ ".ll"
