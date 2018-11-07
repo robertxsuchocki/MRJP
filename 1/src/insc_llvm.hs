@@ -25,13 +25,6 @@ type Store = M.Map Label Loc
 type WS a = WriterT Code (StateT (Store, Loc) IO) a
 
 
-getStore :: WS Store
-
-getStore = do
-  (store, loc) <- get
-  return store
-
-
 nextLabel :: WS Label
 
 nextLabel = do
@@ -51,7 +44,7 @@ nextLocation = do
 transIdent :: Ident -> WS Loc
 
 transIdent (Ident name) = do
-  store <- getStore
+  (store, _) <- get
   let loc = fromMaybe 0 (M.lookup name store)
   if loc /= 0
     then return loc

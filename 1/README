@@ -1,0 +1,41 @@
+Robert Suchocki
+361086
+
+Zadanie 1 - kompilator Instant
+
+Zawartość:
+  - README
+  - Makefile:
+  - src/: insc_jvm.hs, insc_llvm.hs (pliki źródłowe kompilatorów) i Instant.cf
+  - lib/: jasmin.jar (używany przez src/insc_jvm.hs)
+
+Makefile:
+  - generuje parser i lekser z src/Instant.cf przy pomocy bnfc, happy i alex
+  - kompiluje 2 programy kompilatorów insc_jvm i insc_llvm przy pomocy ghc
+
+Biblioteki Haskella:
+  - moduły wygenerowane przez bnfc src/Instant.cf
+  - monady Writer i State
+  - Data List, Map i Maybe
+  - System Environment, FilePath, IO i Process
+
+src/insc_jvm.hs:
+  - przyjmuje plik .ins, generuje z niego kod i zapisuje do pliku .j
+  - z wygenerowanego kodu .j tworzy plik .class przy pomocy lib/jasmin.jar
+  - nie korzysta z niestandardowych bibliotek
+  - implementacja (wzorowana na analizie kodu wynikowego classfileanalyzera):
+    1. wypisywanie wartości przy pomocy standardowego System.out.println
+    2. kod doklejany na początek i koniec wygenerowany przez classfileanalyzer.j
+       na pustym programie
+    3. kolejność operacji iadd i imul uwzględniająca wysokości stosów wyrażeń
+    4. optymalizacja operacji na zmiennych: iload/iload_<n>, istore/istore_<n>
+    5. wybór instrukcji dla stałych liczbowych: iconst_<n>, bipush, sipush, ldc
+
+src/insc_llvm.hs:
+  - przyjmuje plik .ins, generuje z niego kod i zapisuje do pliku .ll
+  - z wygenerowanego kodu .ll tworzy plik .bc przy pomocy llvm-as
+  - nie korzysta z niestandardowych bibliotek
+  - implementacja (wzorowana na analizie kodu wynikowego clanga):
+    1. wypisywanie wartości przy pomocy standardowego printf
+    2. kod doklejany na początek i koniec wygenerowany przez clang na programie
+       z pojedynczym printfem
