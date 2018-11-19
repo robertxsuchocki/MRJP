@@ -128,7 +128,8 @@ run file prog = do
   ((_, out), _) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
   let code = intercalate "\n" $ pack out
   writeFile filePath code
-  void $ runCommand command
+  handle <- runCommand command
+  void $ waitForProcess handle
     where
       filePath = dropExtension file ++ ".ll"
       command  = "llvm-as " ++ filePath

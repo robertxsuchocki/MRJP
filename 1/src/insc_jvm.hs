@@ -140,7 +140,8 @@ run file prog = do
   ((_, out), state) <- runStateT (runWriterT (transProgram prog)) (M.empty, 1)
   let code = intercalate "\n" $ pack out name state
   writeFile filePath code
-  void $ runCommand command
+  handle <- runCommand command
+  void $ waitForProcess handle
     where
       filePath = dropExtension file ++ ".j"
       dirPath  = takeDirectory filePath
