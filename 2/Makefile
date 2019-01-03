@@ -1,11 +1,11 @@
 all: bnfc
 	happy -gcai ParLatte.y
 	alex -g LexLatte.x
-	/opt/ghc/7.10.3/bin/ghc --make compiler.hs -o compiler
+	/opt/ghc/7.10.3/bin/ghc --make src/compiler.hs -o compiler
 
-bnfc: Latte.cf
-	bnfc Latte.cf
+bnfc: src/Latte.cf
+	bnfc src/Latte.cf
 
 clean:
 	rm Abs* Doc* Err* Lex* Par* Print* Skel* Test*
-	rm compiler compiler.hi compiler.o
+	rm compiler src/compiler.hi src/compiler.o

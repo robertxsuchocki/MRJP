@@ -353,8 +353,9 @@ run file prog = do
       dirPath = takeDirectory file
       llPath  = dropExtension file ++ ".ll"
       bcPath  = dropExtension file ++ ".bc"
-      libPath = dirPath ++ "/*.bc"
-      command = unwords ["llvm-as", llPath, "&& llvm-link -o", bcPath, libPath]
+      libPath = dirPath ++ "/lib/*.bc"
+      command = unwords ["llvm-as", llPath, "&&",
+                         "llvm-link -o", bcPath, bcPath, libPath]
 
 
 main :: IO ()
