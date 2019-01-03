@@ -8,4 +8,4 @@ bnfc: Latte.cf
 
 clean:
 	rm Abs* Doc* Err* Lex* Par* Print* Skel* Test*
-	rm compiler compiler.hi compiler.o TypeLatte.hi TypeLatte.o
+	rm compiler compiler.hi compiler.o
