@@ -25,12 +25,19 @@ type Store = M.Map Lbl Val
 type SumMonad a = WriterT [String] (StateT (Store, Loc) IO) a
 
 
-getLbl :: SumMonad Lbl
+setLoc :: Loc -> SumMonad ()
 
-getLbl = do
+setLoc new = do
+  modify (\(m, l) -> (m, new))
+
+
+getLoc :: SumMonad Loc
+
+getLoc = do
   (store, loc) <- get
   let next = loc + 1
-  return $ "%" ++ show next
+  modify (\(m, l) -> (m, next))
+  return next
 
 
 nextLbl :: SumMonad Lbl
@@ -38,38 +45,23 @@ nextLbl :: SumMonad Lbl
 nextLbl = do
   (store, loc) <- get
   let next = loc + 1
+  return $ "%" ++ show next
+
+
+getLbl :: SumMonad Lbl
+
+getLbl = do
+  (store, loc) <- get
+  let next = loc + 1
   modify (\(m, l) -> (m, next))
   return $ "%" ++ show next
 
 
-transIdent :: Ident -> SumMonad Val
-
-transIdent (Ident name) = do
-  (store, _) <- get
-  return $ fromMaybe (Void, "") (M.lookup name store)
-
-
 transProgram :: Program -> SumMonad ()
 
-transProgram (Program []) = return ()
-
-transProgram (Program (td:tds)) = do
-  transTopDef td
-  transProgram $ Program tds
-
-
-transTopDef :: TopDef -> SumMonad ()
-
-transTopDef (FnDef tp (Ident name) args block) = do
-  tname <- transType tp
-  alist <- transArgs args
-  let ftype = (Fun tp (argsTypes args))
-  let lbl = "@" ++ name
-  modify (\(m, l) -> ((M.insert name (ftype, lbl) m), l))
-  let anames = intercalate ", " alist
-  tell ["define " ++ tname ++ " " ++ lbl ++ "(" ++ anames ++ ") {"]
-  transBlock block
-  tell ["}"]
+transProgram (Program tds) = do
+  declTopDefs tds
+  transTopDefs tds
 
 
 argsTypes :: [Arg] -> [Type]
@@ -79,36 +71,88 @@ argsTypes [] = []
 argsTypes ((Arg tp ident):args) = tp : (argsTypes args)
 
 
-transArgs :: [Arg] -> SumMonad [Lbl]
+argsTypeNames :: [Arg] -> SumMonad [Lbl]
+
+argsTypeNames [] = return []
+
+argsTypeNames ((Arg tp (Ident name)):args) = do
+  tname <- transType tp
+  rest  <- argsTypeNames args
+  return (tname:rest)
+
+
+declTopDefs :: [TopDef] -> SumMonad ()
+
+declTopDefs [] =
+  return ()
+
+declTopDefs ((FnDef tp (Ident name) args block):tds) = do
+  let ftype = (Fun tp (argsTypes args))
+  modify (\(m, l) -> ((M.insert name (ftype, name) m), l))
+  declTopDefs tds
+
+
+transTopDefs :: [TopDef] -> SumMonad ()
+
+transTopDefs [] =
+  return ()
+
+transTopDefs ((FnDef tp (Ident name) args block):tds) = do
+  tname <- transType tp
+  alist <- argsTypeNames args
+  let anames = intercalate ", " alist
+  tell ["define " ++ tname ++ " @" ++ name ++ "(" ++ anames ++ ") {"]
+  declArgs args
+  transBlock block
+  tell ["}"]
+  transTopDefs tds
+
+
+declArgs :: [Arg] -> SumMonad ()
+
+declArgs (args) = do
+  let len = length args
+  setLoc len
+  void $ mapM (declArg $ len + 1) args
+
+
+declArg :: Int -> Arg -> SumMonad ()
+
+declArg gap (Arg tp ident@(Ident name)) = do
+  tname <- transType tp
+  loc   <- getLoc
+  let lbl = "%" ++ show loc
+  let val = "%" ++ (show $ loc - gap)
+  modify (\(m, l) -> ((M.insert name (tp, lbl) m), l))
+  tell [lbl ++ " = alloca " ++ tname]
+  tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
+
+
+transArgs :: [Expr] -> SumMonad [Lbl]
 
 transArgs [] = return []
 
-transArgs ((Arg tp (Ident name)):args) = do
-  tname <- transType tp
-  rest  <- transArgs args
-  let name = tname ++ " " ++ name
-  return (name:rest)
-
-
-transArgsExprs :: [Expr] -> SumMonad [Lbl]
-
-transArgsExprs [] = return []
-
-transArgsExprs (expr:exprs) = do
+transArgs (expr:exprs) = do
   (tp, val) <- transExpr expr
   tname     <- transType tp
-  rest      <- transArgsExprs exprs
+  rest      <- transArgs exprs
   let name = tname ++ " " ++ val
   return (name:rest)
 
 
+transIdent :: Ident -> SumMonad Val
+
+transIdent (Ident name) = do
+  (store, _) <- get
+  return $ fromMaybe (Void, "") (M.lookup name store)
+
+
 transBlock :: Block -> SumMonad ()
 
-transBlock (Block []) = return ()
-
-transBlock (Block (stmt:stmts)) = do
-  transStmt stmt
-  transBlock $ Block stmts
+transBlock (Block stmts) = do
+  (store, _) <- get
+  void $ mapM transStmt stmts
+  modify (\(_, l) -> (store, l))
 
 
 transStmt :: Stmt -> SumMonad ()
@@ -116,14 +160,11 @@ transStmt :: Stmt -> SumMonad ()
 transStmt (Empty) =
   return ()
 
-transStmt (BStmt block) = transBlock block
+transStmt (BStmt block) =
+  transBlock block
 
-transStmt (Decl tp []) =
-  return ()
-
-transStmt (Decl tp (item:items)) = do
-  transItem tp item
-  transStmt (Decl tp items)
+transStmt (Decl tp items) =
+  void $ mapM (transItem tp) items
 
 transStmt (Ass ident@(Ident name) expr) = do
   (tp, lbl) <- transIdent ident
@@ -146,7 +187,7 @@ transStmt (VRet) = do
   tell ["ret void"]
 
 transStmt (Cond expr stmt) = do
-  lbl <- getLbl
+  lbl <- nextLbl
   let (_:next) = lbl
   (tp, val) <- transExpr expr
   tname     <- transType tp
@@ -158,7 +199,7 @@ transStmt (Cond expr stmt) = do
         "end" ++ next ++ ":"]
 
 transStmt (CondElse expr stmt1 stmt2) = do
-  lbl <- getLbl
+  lbl <- nextLbl
   let (_:next) = lbl
   (tp, val) <- transExpr expr
   tname     <- transType tp
@@ -173,9 +214,10 @@ transStmt (CondElse expr stmt1 stmt2) = do
         "end" ++ next ++ ":"]
 
 transStmt (While expr stmt) = do
-  lbl <- getLbl
+  lbl <- nextLbl
   let (_:next) = lbl
-  tell ["br label %cond" ++ next ++ ""]
+  tell ["br label %cond" ++ next ++ "",
+        "cond" ++ next ++ ":"]
 
   (tp, val) <- transExpr expr
   tname     <- transType tp
@@ -194,13 +236,17 @@ transItem :: Type -> Item -> SumMonad ()
 
 transItem tp (NoInit ident@(Ident name)) = do
   tname <- transType tp
-  lbl   <- nextLbl
+  lbl   <- getLbl
   modify (\(m, l) -> ((M.insert name (tp, lbl) m), l))
   tell [lbl ++ " = alloca " ++ tname]
 
+  let val = case tp of Int  -> "0"
+                       Bool -> "false"
+  tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
+
 transItem tp (Init ident@(Ident name) expr) = do
   tname <- transType tp
-  lbl   <- nextLbl
+  lbl   <- getLbl
   modify (\(m, l) -> ((M.insert name (tp, lbl) m), l))
   tell [lbl ++ " = alloca " ++ tname]
 
@@ -223,7 +269,7 @@ transExpr :: Expr -> SumMonad Val
 transExpr (EVar ident) = do
   (tp, val) <- transIdent ident
   tname     <- transType tp
-  lbl       <- nextLbl
+  lbl       <- getLbl
   tell [lbl ++ " = load " ++ tname ++ ", " ++ tname ++ "* " ++ val]
   return (tp, lbl)
 
@@ -231,22 +277,22 @@ transExpr (ELitInt integer) =
   return (Int, show integer)
 
 transExpr (ELitTrue) =
-  return (Bool, "1")
+  return (Bool, "true")
 
 transExpr (ELitFalse) =
-  return (Bool, "0")
+  return (Bool, "false")
 
 transExpr (EApp ident@(Ident name) exprs) = do
   ((Fun tp _), _)   <- transIdent ident
   tname             <- transType tp
-  alist             <- transArgsExprs exprs
+  alist             <- transArgs exprs
   let anames   = intercalate ", " alist
   let ellipsis = if (null alist) then " (...)" else ""
   let callFunc = "call " ++ tname ++ ellipsis ++ " @" ++ name ++
                  "(" ++ anames ++ ")"
   if (tp /= Void)
     then do
-      lbl <- nextLbl
+      lbl <- getLbl
       tell [lbl ++ " = " ++ callFunc]
       return (tp, lbl)
     else do
@@ -292,7 +338,7 @@ transOp tp op expr1 expr2 = do
   (_, val1) <- transExpr expr1
   (_, val2) <- transExpr expr2
   tname     <- transType tp
-  lbl       <- nextLbl
+  lbl       <- getLbl
   tell [lbl ++ " = " ++ op ++ " " ++ tname ++ " " ++ val1 ++ ", " ++ val2]
   return lbl
 
