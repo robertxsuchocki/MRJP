@@ -104,6 +104,10 @@ transTopDefs ((FnDef tp (Ident name) args block):tds) = do
   tell ["define " ++ tname ++ " @" ++ name ++ "(" ++ anames ++ ") {"]
   declArgs args
   transBlock block
+  let guard = case tp of Void -> "ret void"
+                         Int  -> "ret i32 0"
+                         Bool -> "ret i1 false"
+  tell [guard]
   tell ["}"]
   transTopDefs tds
 
@@ -181,9 +185,11 @@ transStmt (Decr ident) =
 transStmt (Ret expr) = do
   (tp, val) <- transExpr expr
   tname     <- transType tp
+  void $ getLbl
   tell ["ret " ++ tname ++ " " ++ val]
 
 transStmt (VRet) = do
+  void $ getLbl
   tell ["ret void"]
 
 transStmt (Cond expr stmt) = do
