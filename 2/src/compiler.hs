@@ -3,6 +3,7 @@ module Main where
 import AbsLatte
 import LexLatte
 import ParLatte
+import TypeLatte
 import ErrM
 
 import Control.Monad.Writer
@@ -22,16 +23,16 @@ type Loc = Int
 type Lbl = String
 type Val = (Type, Lbl)
 type Store = M.Map Lbl Val
-type SumMonad a = WriterT [String] (StateT (Store, Loc, Loc) IO) a
+type WSIO a = WriterT [String] (StateT (Store, Loc, Loc) IO) a
 
 
-setLoc :: Loc -> SumMonad ()
+setLoc :: Loc -> WSIO ()
 
 setLoc new = do
   modify (\(m, l, s) -> (m, new, s))
 
 
-getLoc :: SumMonad Loc
+getLoc :: WSIO Loc
 
 getLoc = do
   (store, loc, _) <- get
@@ -40,7 +41,7 @@ getLoc = do
   return next
 
 
-nextLbl :: SumMonad Lbl
+nextLbl :: WSIO Lbl
 
 nextLbl = do
   (store, loc, _) <- get
@@ -48,7 +49,7 @@ nextLbl = do
   return $ "%" ++ show next
 
 
-getLbl :: SumMonad Lbl
+getLbl :: WSIO Lbl
 
 getLbl = do
   (store, loc, _) <- get
@@ -57,7 +58,7 @@ getLbl = do
   return $ "%" ++ show next
 
 
-getStrLbl :: SumMonad Lbl
+getStrLbl :: WSIO Lbl
 
 getStrLbl = do
   (_, _, str) <- get
@@ -66,7 +67,7 @@ getStrLbl = do
   return $ "@.str." ++ show next
 
 
-emptyString :: SumMonad Lbl
+emptyString :: WSIO Lbl
 
 emptyString = do
   lbl <- getLbl
@@ -74,7 +75,7 @@ emptyString = do
   return lbl
 
 
-initValue :: Type -> SumMonad String
+initValue :: Type -> WSIO String
 
 initValue Str = do
   lbl <- emptyString
@@ -85,7 +86,7 @@ initValue tp = case tp of
   Bool -> return "false"
 
 
-retInitValue :: Type -> SumMonad String
+retInitValue :: Type -> WSIO String
 
 retInitValue Str = do
   lbl <- emptyString
@@ -97,7 +98,7 @@ retInitValue tp = case tp of
   Void -> return "ret void"
 
 
-transProgram :: Program -> SumMonad ()
+transProgram :: Program -> WSIO ()
 
 transProgram (Program tds) = do
   declTopDefs tds
@@ -111,7 +112,7 @@ argsTypes [] = []
 argsTypes ((Arg tp ident):args) = tp : (argsTypes args)
 
 
-argsTypeNames :: [Arg] -> SumMonad [Lbl]
+argsTypeNames :: [Arg] -> WSIO [Lbl]
 
 argsTypeNames [] = return []
 
@@ -121,7 +122,7 @@ argsTypeNames ((Arg tp (Ident name)):args) = do
   return (tname:rest)
 
 
-declTopDefs :: [TopDef] -> SumMonad ()
+declTopDefs :: [TopDef] -> WSIO ()
 
 declTopDefs [] =
   return ()
@@ -132,7 +133,7 @@ declTopDefs ((FnDef tp (Ident name) args block):tds) = do
   declTopDefs tds
 
 
-transTopDefs :: [TopDef] -> SumMonad ()
+transTopDefs :: [TopDef] -> WSIO ()
 
 transTopDefs [] =
   return ()
@@ -150,7 +151,7 @@ transTopDefs ((FnDef tp (Ident name) args block):tds) = do
   transTopDefs tds
 
 
-declArgs :: [Arg] -> SumMonad ()
+declArgs :: [Arg] -> WSIO ()
 
 declArgs (args) = do
   let len = length args
@@ -158,7 +159,7 @@ declArgs (args) = do
   void $ mapM (declArg $ len + 1) args
 
 
-declArg :: Int -> Arg -> SumMonad ()
+declArg :: Int -> Arg -> WSIO ()
 
 declArg gap (Arg tp ident@(Ident name)) = do
   tname <- transType tp
@@ -170,7 +171,7 @@ declArg gap (Arg tp ident@(Ident name)) = do
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
 
 
-transArgs :: [Expr] -> SumMonad [Lbl]
+transArgs :: [Expr] -> WSIO [Lbl]
 
 transArgs [] = return []
 
@@ -182,14 +183,14 @@ transArgs (expr:exprs) = do
   return (name:rest)
 
 
-transIdent :: Ident -> SumMonad Val
+transIdent :: Ident -> WSIO Val
 
 transIdent (Ident name) = do
   (store, _, _) <- get
   return $ fromMaybe (Void, "") (M.lookup name store)
 
 
-transBlock :: Block -> SumMonad ()
+transBlock :: Block -> WSIO ()
 
 transBlock (Block stmts) = do
   (store, _, _) <- get
@@ -197,7 +198,7 @@ transBlock (Block stmts) = do
   modify (\(_, l, s) -> (store, l, s))
 
 
-transStmt :: Stmt -> SumMonad ()
+transStmt :: Stmt -> WSIO ()
 
 transStmt (Empty) =
   return ()
@@ -277,7 +278,7 @@ transStmt (SExp expr) =
   void $ transExpr expr
 
 
-transItem :: Type -> Item -> SumMonad ()
+transItem :: Type -> Item -> WSIO ()
 
 transItem tp (NoInit ident@(Ident name)) = do
   val   <- initValue tp
@@ -298,7 +299,7 @@ transItem tp (Init ident@(Ident name) expr) = do
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
 
 
-transType :: Type -> SumMonad String
+transType :: Type -> WSIO String
 
 transType tp = case tp of
   Int  -> return "i32"
@@ -308,7 +309,7 @@ transType tp = case tp of
   Fun ftype atypes -> return $ show ftype
 
 
-transExpr :: Expr -> SumMonad Val
+transExpr :: Expr -> WSIO Val
 
 transExpr (EVar ident) = do
   (tp, val) <- transIdent ident
@@ -415,7 +416,7 @@ transExpr (EOr expr1 expr2) = do
   return (Bool, val)
 
 
-transAdd :: Expr -> Expr -> SumMonad Val
+transAdd :: Expr -> Expr -> WSIO Val
 
 transAdd expr1 expr2 = do
   (tp, val1) <- transExpr expr1
@@ -443,7 +444,7 @@ transAdd expr1 expr2 = do
       return (tp, val)
 
 
-transOp :: String -> Expr -> Expr -> SumMonad Lbl
+transOp :: String -> Expr -> Expr -> WSIO Lbl
 
 transOp op expr1 expr2 = do
   (tp, val1) <- transExpr expr1
@@ -454,7 +455,7 @@ transOp op expr1 expr2 = do
   return lbl
 
 
-transMulOp :: MulOp -> SumMonad String
+transMulOp :: MulOp -> WSIO String
 
 transMulOp mulop = case mulop of
   Times -> return "mul nsw"
@@ -462,7 +463,7 @@ transMulOp mulop = case mulop of
   Mod   -> return "srem"
 
 
-transRelOp :: RelOp -> SumMonad String
+transRelOp :: RelOp -> WSIO String
 
 transRelOp relop = case relop of
   LTH -> return "icmp slt"
@@ -532,4 +533,8 @@ case args of
   code <- readFile file
   case pProgram (myLexer code) of
     (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
-    (Ok tree) -> run file tree
+    (Ok tree) -> do
+      (valid, _) <- runStateT (validProgram tree) M.empty
+      if (not valid)
+        then do return ()
+        else do run file tree
