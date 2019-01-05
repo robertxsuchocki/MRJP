@@ -28,5 +28,7 @@ char* readString() {
 
   read = getline(&line, &len, stdin);
 
+  line[read - 1] = '\0';
+
   return line;
 }
