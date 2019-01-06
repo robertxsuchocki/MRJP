@@ -536,5 +536,7 @@ case args of
     (Ok tree) -> do
       (valid, _) <- runStateT (validProgram tree) M.empty
       if (not valid)
-        then do return ()
-        else do run file tree
+        then do
+          hPutStr stderr $ "Error: Typing failed\n"
+          return ()
+        else run file tree

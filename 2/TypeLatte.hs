@@ -16,6 +16,32 @@ type TypeStore = M.Map String Type
 type SIO a = (StateT TypeStore IO) a
 
 
+argTypes :: [Arg] -> [Type]
+
+argTypes [] = []
+argTypes ((Arg tp _):args) = tp : (argTypes args)
+
+
+argsIdents :: [Arg] -> [Ident]
+
+argsIdents [] = []
+argsIdents ((Arg _ ident):args) = ident : (argsIdents args)
+
+
+itemsIdents :: [Item] -> [Ident]
+
+itemsIdents [] = []
+itemsIdents ((NoInit ident):its) = ident : (itemsIdents its)
+itemsIdents ((Init ident expr):its) = ident : (itemsIdents its)
+
+
+stmtsIdents :: [Stmt] -> [Ident]
+
+stmtsIdents [] = []
+stmtsIdents ((Decl _ items):its) = (itemsIdents items) ++ (stmtsIdents its)
+stmtsIdents (_:its) = stmtsIdents its
+
+
 argsDecl :: [Arg] -> SIO ()
 
 argsDecl [] = return ()
@@ -25,27 +51,29 @@ argsDecl ((Arg tp (Ident name)):args) = do
   argsDecl args
 
 
-argTypes :: [Arg] -> [Type]
+uniqueIdents :: [Ident] -> [Ident] -> SIO Bool
 
-argTypes [] = []
+uniqueIdents _ [] =
+  return True
 
-argTypes ((Arg tp _):args) = tp : (argTypes args)
-
-
-argsIdents :: [Arg] -> [Ident]
-
-argsIdents [] = []
-
-argsIdents ((Arg _ ident):args) = ident : (argsIdents args)
+uniqueIdents seen (ident@(Ident name):idents) = do
+  if (elem ident seen)
+    then do
+      liftIO $ hPutStr stderr $
+        "Error: Redeclaration of variable " ++ (show name) ++ "\n"
+      return False
+    else do
+      rest <- uniqueIdents (ident:seen) idents
+      return rest
 
 
 validArgs :: [Type] -> [Expr] -> SIO Bool
 
-validArgs (tp:types) (expr:exprs) = do
+validArgs (tp:tps) (expr:exprs) = do
   valid <- validExpr tp expr
   if (not valid)
     then return False
-    else validArgs types exprs
+    else validArgs tps exprs
 
 validArgs [] [] = return True
 
@@ -57,8 +85,8 @@ validProgram :: Program -> SIO Bool
 validProgram (Program tds) = do
   addBuiltins
   typeTopDefs tds
-  valids <- mapM validTopDef tds
-  return (all (== True) valids)
+  valid <- validTopDefs tds
+  return valid
 
 
 addBuiltins :: SIO ()
@@ -82,6 +110,21 @@ typeTopDefs ((FnDef tp (Ident name) args block):tds) = do
   typeTopDefs tds
 
 
+validTopDefs :: [TopDef] -> SIO Bool
+
+validTopDefs [] =
+  return True
+
+validTopDefs (td:tds) = do
+  valid <- validTopDef td
+  if not valid
+    then do
+      liftIO $ hPutStr stderr $ "Error: Fail in declaration of " ++
+        (show td) ++ "\n"
+      return False
+    else validTopDefs tds
+
+
 validTopDef :: TopDef -> SIO Bool
 
 validTopDef (FnDef tp (Ident name) args block) = do
@@ -100,21 +143,39 @@ validTopDef (FnDef tp (Ident name) args block) = do
   let valid_a = idents == (nub idents)
   let valid_v = all (/= Void) (argTypes args)
 
+  when (not valid_r && tp /= Void) $ liftIO $ hPutStr stderr $
+    "Error: No valid return in function " ++ name ++ "\n"
+
+  when (not valid_a) $ liftIO $ hPutStr stderr $
+    "Error: Repetitive arguments for function " ++ name ++ "\n"
+
+  when (not valid_v) $ liftIO $ hPutStr stderr $
+    "Error: Void arguments in function " ++ name ++ "\n"
+
   return (valid_b && (valid_r || tp == Void) && valid_a && valid_v)
 
 
 validBlock :: Block -> SIO Bool
 
-validBlock (Block (s:ss)) = do
+validBlock (Block stmts) = do
+  valid_d <- uniqueIdents [] (stmtsIdents stmts)
+  valid_s <- validStmts stmts
+  when (not $ valid_d && valid_s) $ liftIO $ hPutStr stderr $
+    "Error: Fail in block " ++ (show stmts) ++ "\n"
+  return $ valid_d && valid_s
+
+
+validStmts :: [Stmt] -> SIO Bool
+
+validStmts (s:ss) = do
   valid <- validStmt s
   if (valid)
-    then validBlock (Block ss)
+    then validStmts ss
     else do
-      liftIO $ hPutStr stderr $ "Error: Typing failed in statement " ++
-        (show s) ++ "\n"
+      liftIO $ hPutStr stderr $ "Error: Fail in statement " ++ (show s) ++ "\n"
       return False
 
-validBlock (Block []) =
+validStmts [] =
   return True
 
 
@@ -127,6 +188,46 @@ validIdent (Ident name) tp = do
     _      -> return False
 
 
+getRelOpVal :: RelOp -> Bool -> Bool -> Bool
+
+getRelOpVal relop bool1 bool2 = case relop of
+  LTH -> not bool1 && bool2
+  LE  -> not bool1 || bool2
+  GTH -> bool1 && not bool2
+  GE  -> bool1 || not bool2
+  EQU -> bool1 == bool2
+  NE  -> bool1 /= bool2
+
+
+isELitBool :: Expr -> Maybe Bool
+
+isELitBool (ELitTrue) = Just True
+
+isELitBool (ELitFalse) = Just False
+
+isELitBool (Not expr) =
+  case isELitBool expr of
+    Just bool -> Just (not bool)
+    Nothing   -> Nothing
+
+isELitBool (ERel expr1 relop expr2) =
+  case (isELitBool expr1, isELitBool expr2) of
+    (Just bool1, Just bool2) -> Just (getRelOpVal relop bool1 bool2)
+    _                        -> Nothing
+
+isELitBool (EAnd expr1 expr2) =
+  case (isELitBool expr1, isELitBool expr2) of
+    (Just bool1, Just bool2) -> Just (bool1 && bool2)
+    _                        -> Nothing
+
+isELitBool (EOr expr1 expr2) =
+  case (isELitBool expr1, isELitBool expr2) of
+    (Just bool1, Just bool2) -> Just (bool1 || bool2)
+    _                        -> Nothing
+
+isELitBool _ = Nothing
+
+
 hasReturnClause :: [Stmt] -> SIO Bool
 
 hasReturnClause [] =
@@ -135,13 +236,26 @@ hasReturnClause [] =
 hasReturnClause ((BStmt (Block bss)):ss) =
   hasReturnClause (bss ++ ss)
 
-hasReturnClause ((While _ stmt):ss) =
-  hasReturnClause (stmt:ss)
+hasReturnClause ((Cond expr stmt):ss) = do
+  let truthy = (isELitBool expr == Just True)
+  valid <- hasReturnClause [stmt]
+  if (truthy && valid)
+    then return True
+    else hasReturnClause ss
 
 hasReturnClause ((CondElse expr stmt1 stmt2):ss) = do
+  let truthy = (isELitBool expr == Just True)
+  let falsy  = (isELitBool expr == Just False)
   valid1 <- hasReturnClause [stmt1]
   valid2 <- hasReturnClause [stmt2]
-  if (valid1 && valid2)
+  if (valid1 && valid2 || truthy && valid1 || falsy && valid2)
+    then return True
+    else hasReturnClause ss
+
+hasReturnClause ((While expr stmt):ss) = do
+  let truthy = (isELitBool expr == Just True)
+  valid <- hasReturnClause [stmt]
+  if (truthy && valid)
     then return True
     else hasReturnClause ss
 
@@ -149,6 +263,21 @@ hasReturnClause (s:ss) = case s of
   Ret _    -> return True
   VRet     -> return True
   _        -> hasReturnClause ss
+
+
+validItems :: Type -> [Item] -> SIO Bool
+
+validItems _ [] =
+  return True
+
+validItems tp (it:its) = do
+  valid <- validItem tp it
+  if not valid
+    then do
+      liftIO $ hPutStr stderr $ "Error: Fail in declaration of " ++
+        (show it) ++ "\n"
+      return False
+    else validItems tp its
 
 
 validItem :: Type -> Item -> SIO Bool
@@ -172,14 +301,14 @@ validStmt (BStmt block) =
   validBlock block
 
 validStmt (Decl tp items) = do
-  valids <- mapM (validItem tp) items
-  return (all (== True) valids)
+  valid <- validItems tp items
+  return valid
 
 validStmt (Ass (Ident name) expr) = do
   store <- get
   case M.lookup name store of
-    Just type' -> validExpr type' expr
-    _          -> return False
+    Just tp -> validExpr tp expr
+    _       -> return False
 
 validStmt (Incr ident) =
   validIdent ident Int
@@ -230,11 +359,11 @@ validExprsAny :: [Type] -> Expr -> SIO Bool
 validExprsAny [] expr =
   return False
 
-validExprsAny (tp:types) expr = do
+validExprsAny (tp:tps) expr = do
   valid <- validExpr tp expr
   if valid
     then return True
-    else validExprsAny types expr
+    else validExprsAny tps expr
 
 
 validExpr :: Type -> Expr -> SIO Bool
