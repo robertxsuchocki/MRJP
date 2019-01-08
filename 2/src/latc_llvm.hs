@@ -14,6 +14,7 @@ import Data.Map (Map, (!))
 import Data.Maybe
 import qualified Data.Map as M
 
+import System.Directory
 import System.Environment
 import System.FilePath
 import System.IO
@@ -232,9 +233,9 @@ transStmt (VRet) = do
   tell ["ret void"]
 
 transStmt (Cond expr stmt) = do
+  (_, val) <- transExpr expr
   lbl <- nextLbl
   let (_:next) = lbl
-  (_, val) <- transExpr expr
   tell ["br i1 " ++ val ++ ", label %then" ++ next ++ ", label %end" ++ next]
 
   tell ["then" ++ next ++ ":"]
@@ -244,9 +245,9 @@ transStmt (Cond expr stmt) = do
   tell ["end" ++ next ++ ":"]
 
 transStmt (CondElse expr stmt1 stmt2) = do
+  (_, val) <- transExpr expr
   lbl <- nextLbl
   let (_:next) = lbl
-  (_, val) <- transExpr expr
   tell ["br i1 " ++ val ++ ", label %then" ++ next ++ ", label %else" ++ next]
 
   tell ["then" ++ next ++ ":"]
@@ -512,15 +513,15 @@ run file prog = do
   ((_, out), _) <- runStateT (runWriterT (transProgram prog)) state
   let code = intercalate "\n" $ moveGlobals $ pack out
   writeFile llPath code
-  handle <- runCommand command
+  currPath <- getCurrentDirectory
+  let libPath = currPath ++ "/lib/*.bc"
+  handle <- runCommand $
+    unwords ["llvm-as", llPath, "&&", "llvm-link -o", bcPath, bcPath, libPath]
   void $ waitForProcess handle
     where
       dirPath = takeDirectory file
       llPath  = dropExtension file ++ ".ll"
       bcPath  = dropExtension file ++ ".bc"
-      libPath = dirPath ++ "/lib/*.bc"
-      command = unwords ["llvm-as", llPath, "&&",
-                         "llvm-link -o", bcPath, bcPath, libPath]
 
 
 main :: IO ()
@@ -528,15 +529,18 @@ main :: IO ()
 main = do
 args <- getArgs
 case args of
-  []  -> hPutStr stderr "Error: No file provided\n"
+  []  -> hPutStr stderr "ERROR\nNo file provided\n"
   (file:_) -> do
   code <- readFile file
   case pProgram (myLexer code) of
-    (Bad msg) -> hPutStr stderr $ "Error: " ++ msg ++ "\n"
+    (Bad msg) -> hPutStr stderr $ "ERROR\n" ++ msg ++ "\n"
     (Ok tree) -> do
-      (valid, _) <- runStateT (validProgram tree) M.empty
+      ((valid, msg), _) <- runStateT (runWriterT (validProgram tree)) M.empty
       if (not valid)
         then do
-          hPutStr stderr $ "Error: Typing failed\n"
+          let errors = intercalate "\n" msg
+          hPutStr stderr $ "ERROR\n" ++ errors ++ "\nTyping failed\n"
           return ()
-        else run file tree
+        else do
+          hPutStr stderr "OK\n"
+          run file tree

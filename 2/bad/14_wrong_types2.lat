@@ -1,0 +1,11 @@
+void x () {
+  return 0;
+}
+
+int y () {
+  return;
+}
+
+int main() {
+
+}

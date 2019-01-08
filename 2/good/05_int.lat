@@ -1,0 +1,17 @@
+int zero() {
+  return 0;
+}
+int main() {
+  int a = 42;
+  int b = a + 1;
+  int c = b - 1;
+  int d = zero();
+  int e = -a;
+  int f = e * (d + e);
+  int g = (-e % f) / 2;
+  int h = f % g;
+
+  printString("success!");
+  # prints success!
+  return 0;
+}

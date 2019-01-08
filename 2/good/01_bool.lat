@@ -1,0 +1,22 @@
+boolean yes() {
+  return true;
+}
+int main() {
+  boolean a = true;
+  boolean b = false;
+  boolean c = !a;
+  boolean d = 0 < 1;
+  boolean e = 0 % 1 != 1;
+  boolean f = 0 >= 1 + 2;
+  boolean g = c && d;
+  boolean h = d || e;
+  boolean i = e && f || a || 42 >= 4 + 2;
+
+  if (true) {
+    if (b == c) {
+        printString("success!");
+        # prints success!
+    }
+  }
+  return 0;
+}

@@ -1,0 +1,13 @@
+string success() {
+  return "success!";
+}
+int main() {
+  string a = "";
+  string b = "forty two";
+  string c = a + b;
+  string d = success();
+
+  printString(d);
+  # prints success!
+  return 0;
+}

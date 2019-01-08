@@ -2,6 +2,7 @@ module TypeLatte where
 
 import AbsLatte
 
+import Control.Monad.Writer
 import Control.Monad.State
 
 import Data.List
@@ -13,7 +14,7 @@ import System.IO
 
 type TypeStore = M.Map String Type
 
-type SIO a = (StateT TypeStore IO) a
+type TypeWSIO a = WriterT [String] (StateT TypeStore IO) a
 
 
 argTypes :: [Arg] -> [Type]
@@ -42,7 +43,7 @@ stmtsIdents ((Decl _ items):its) = (itemsIdents items) ++ (stmtsIdents its)
 stmtsIdents (_:its) = stmtsIdents its
 
 
-argsDecl :: [Arg] -> SIO ()
+argsDecl :: [Arg] -> TypeWSIO ()
 
 argsDecl [] = return ()
 
@@ -51,7 +52,7 @@ argsDecl ((Arg tp (Ident name)):args) = do
   argsDecl args
 
 
-uniqueIdents :: [Ident] -> [Ident] -> SIO Bool
+uniqueIdents :: [Ident] -> [Ident] -> TypeWSIO Bool
 
 uniqueIdents _ [] =
   return True
@@ -59,15 +60,14 @@ uniqueIdents _ [] =
 uniqueIdents seen (ident@(Ident name):idents) = do
   if (elem ident seen)
     then do
-      liftIO $ hPutStr stderr $
-        "Error: Redeclaration of variable " ++ (show name) ++ "\n"
+      tell ["Redeclaration of variable " ++ (show name)]
       return False
     else do
       rest <- uniqueIdents (ident:seen) idents
       return rest
 
 
-validArgs :: [Type] -> [Expr] -> SIO Bool
+validArgs :: [Type] -> [Expr] -> TypeWSIO Bool
 
 validArgs (tp:tps) (expr:exprs) = do
   valid <- validExpr tp expr
@@ -80,16 +80,20 @@ validArgs [] [] = return True
 validArgs _ _ = return False
 
 
-validProgram :: Program -> SIO Bool
+validProgram :: Program -> TypeWSIO Bool
 
 validProgram (Program tds) = do
   addBuiltins
   typeTopDefs tds
   valid <- validTopDefs tds
-  return valid
+  main  <- validExpr Int (EApp (Ident "main") [])
+
+  when (not main) $ tell ["No valid main function"]
+
+  return $ valid && main
 
 
-addBuiltins :: SIO ()
+addBuiltins :: TypeWSIO ()
 addBuiltins = do
   let builtins = [("printInt", Fun Void [Int]),
                   ("printString", Fun Void [Str]),
@@ -99,7 +103,7 @@ addBuiltins = do
   modify (\_ -> M.fromList builtins)
 
 
-typeTopDefs :: [TopDef] -> SIO ()
+typeTopDefs :: [TopDef] -> TypeWSIO ()
 
 typeTopDefs [] =
   return ()
@@ -110,7 +114,7 @@ typeTopDefs ((FnDef tp (Ident name) args block):tds) = do
   typeTopDefs tds
 
 
-validTopDefs :: [TopDef] -> SIO Bool
+validTopDefs :: [TopDef] -> TypeWSIO Bool
 
 validTopDefs [] =
   return True
@@ -119,13 +123,12 @@ validTopDefs (td:tds) = do
   valid <- validTopDef td
   if not valid
     then do
-      liftIO $ hPutStr stderr $ "Error: Fail in declaration of " ++
-        (show td) ++ "\n"
+      tell ["Fail in declaration of " ++ (show td)]
       return False
     else validTopDefs tds
 
 
-validTopDef :: TopDef -> SIO Bool
+validTopDef :: TopDef -> TypeWSIO Bool
 
 validTopDef (FnDef tp (Ident name) args block) = do
   let idents = argsIdents args
@@ -143,43 +146,43 @@ validTopDef (FnDef tp (Ident name) args block) = do
   let valid_a = idents == (nub idents)
   let valid_v = all (/= Void) (argTypes args)
 
-  when (not valid_r && tp /= Void) $ liftIO $ hPutStr stderr $
-    "Error: No valid return in function " ++ name ++ "\n"
+  when (not valid_r && tp /= Void) $
+    tell ["No valid return in function " ++ name]
 
-  when (not valid_a) $ liftIO $ hPutStr stderr $
-    "Error: Repetitive arguments for function " ++ name ++ "\n"
+  when (not valid_a) $
+    tell ["Repetitive arguments for function " ++ name]
 
-  when (not valid_v) $ liftIO $ hPutStr stderr $
-    "Error: Void arguments in function " ++ name ++ "\n"
+  when (not valid_v) $
+    tell ["Void arguments in function " ++ name]
 
   return (valid_b && (valid_r || tp == Void) && valid_a && valid_v)
 
 
-validBlock :: Block -> SIO Bool
+validBlock :: Block -> TypeWSIO Bool
 
 validBlock (Block stmts) = do
   valid_d <- uniqueIdents [] (stmtsIdents stmts)
   valid_s <- validStmts stmts
-  when (not $ valid_d && valid_s) $ liftIO $ hPutStr stderr $
-    "Error: Fail in block " ++ (show stmts) ++ "\n"
+  when (not $ valid_d && valid_s) $
+    tell ["Fail in block " ++ (show stmts)]
   return $ valid_d && valid_s
 
 
-validStmts :: [Stmt] -> SIO Bool
+validStmts :: [Stmt] -> TypeWSIO Bool
 
 validStmts (s:ss) = do
   valid <- validStmt s
   if (valid)
     then validStmts ss
     else do
-      liftIO $ hPutStr stderr $ "Error: Fail in statement " ++ (show s) ++ "\n"
+      tell ["Fail in statement " ++ (show s)]
       return False
 
 validStmts [] =
   return True
 
 
-validIdent :: Ident -> Type -> SIO Bool
+validIdent :: Ident -> Type -> TypeWSIO Bool
 
 validIdent (Ident name) tp = do
   store <- get
@@ -228,7 +231,7 @@ isELitBool (EOr expr1 expr2) =
 isELitBool _ = Nothing
 
 
-hasReturnClause :: [Stmt] -> SIO Bool
+hasReturnClause :: [Stmt] -> TypeWSIO Bool
 
 hasReturnClause [] =
   return False
@@ -265,7 +268,7 @@ hasReturnClause (s:ss) = case s of
   _        -> hasReturnClause ss
 
 
-validItems :: Type -> [Item] -> SIO Bool
+validItems :: Type -> [Item] -> TypeWSIO Bool
 
 validItems _ [] =
   return True
@@ -274,13 +277,12 @@ validItems tp (it:its) = do
   valid <- validItem tp it
   if not valid
     then do
-      liftIO $ hPutStr stderr $ "Error: Fail in declaration of " ++
-        (show it) ++ "\n"
+      tell ["Fail in declaration of " ++ (show it)]
       return False
     else validItems tp its
 
 
-validItem :: Type -> Item -> SIO Bool
+validItem :: Type -> Item -> TypeWSIO Bool
 
 validItem tp (NoInit (Ident name)) = do
   modify (M.insert name tp)
@@ -292,7 +294,7 @@ validItem tp (Init (Ident name) expr) = do
   return $ valid && tp /= Void
 
 
-validStmt :: Stmt -> SIO Bool
+validStmt :: Stmt -> TypeWSIO Bool
 
 validStmt Empty =
   return True
@@ -342,7 +344,7 @@ validStmt (SExp expr) =
   validExprsAny [Int, Bool, Str, Void] expr
 
 
-validExprsAll :: [(Type, Expr)] -> SIO Bool
+validExprsAll :: [(Type, Expr)] -> TypeWSIO Bool
 
 validExprsAll [] =
   return True
@@ -354,7 +356,7 @@ validExprsAll ((tp, expr):pairs) = do
     else validExprsAll pairs
 
 
-validExprsAny :: [Type] -> Expr -> SIO Bool
+validExprsAny :: [Type] -> Expr -> TypeWSIO Bool
 
 validExprsAny [] expr =
   return False
@@ -366,7 +368,7 @@ validExprsAny (tp:tps) expr = do
     else validExprsAny tps expr
 
 
-validExpr :: Type -> Expr -> SIO Bool
+validExpr :: Type -> Expr -> TypeWSIO Bool
 
 validExpr tp (EVar ident) =
   validIdent ident tp

@@ -1,0 +1,27 @@
+void exclamation_mark() {
+  printString("!");
+}
+int main() {
+  if (true) {
+    printString("s");
+    printString("u");
+  }
+  int x;
+
+  ;
+  {
+    x = 0;
+  }
+  while (x < 2) {
+    printString("c");
+    x++;
+  }
+  printString("e");
+  if (x == 2) {
+    printString("s");
+    printString("s");
+  }
+  exclamation_mark();
+  # finishes printing up to down success!
+  return 0;
+}

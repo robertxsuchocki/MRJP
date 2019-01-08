@@ -1,0 +1,10 @@
+int main() {
+  //  So I stumble home, pack up my old memories
+  printString("success!"); #   Pictures of ma, my daddy's flask she gave me
+  /*
+      Keep it near your heart, she would always say
+      It's all he left, and so that's where it'll stay
+      Her leatherbound, book of psalms and prayers
+  */
+  return 0; # She would always read with patience and care
+}

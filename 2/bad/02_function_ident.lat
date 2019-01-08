@@ -1,0 +1,9 @@
+int double(int x) {
+  return x * 2;
+}
+int main() {
+  int x = 4;
+  int y = triple(x);
+
+  return 0;
+}

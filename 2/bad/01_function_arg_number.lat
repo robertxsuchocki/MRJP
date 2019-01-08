@@ -1,0 +1,15 @@
+int i_take_two_args_sir(int x, int y) {
+  if (x > y) {
+    return 42;
+  } else {
+    return 42;
+  }
+}
+int main() {
+  int x = 4;
+  int y = 2;
+  int z = i_take_two_args_sir(x);
+
+  z = i_take_two_args_sir(x, y, z);
+  return 0;
+}

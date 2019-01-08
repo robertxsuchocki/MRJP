@@ -1,0 +1,10 @@
+int f(string y,boolean z) {
+  return 0;
+}
+int main() {
+  int x;
+  boolean y;
+  string z;
+
+  return f(y, z);
+}

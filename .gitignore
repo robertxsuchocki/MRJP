@@ -30,5 +30,5 @@ Test*
 
 ignore/
 
-compiler
+latc_llvm
 

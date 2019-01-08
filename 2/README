@@ -3,5 +3,31 @@ Robert Suchocki
 
 Zadanie 2 - kompilator Latte
 
-TODO
+Zawartość:
+  - README
+  - Makefile
+  - src/:
+    - latc_llvm.hs (plik źródłowy kompilatora)
+    - TypeLatte.hs (plik źródłowy typecheckera)
+    - Latte.cf (plik z gramatyką języka)
+  - lib/:
+    - runtime.bc (funkcje biblioteczne)
+    - runtime.c (kod źródłowy runtime.bc)
+  - good/: programy poprawne *.lat i oczekiwane outputy *.output
+  - bad/: programy niepoprawne *.lat
 
+Makefile:
+  - generuje parser i lekser z src/Latte.cf przy pomocy bnfc, happy i alex
+  - kompiluje program kompilatora latc_llvm przy pomocy ghc
+
+Biblioteki Haskella:
+  - moduły wygenerowane przez bnfc src/Latte.cf
+  - monady Writer i State
+  - Data List, Map i Maybe
+  - System Directory, Environment, FilePath, IO i Process
+
+src/insc_llvm.hs:
+  - przyjmuje plik .lat, generuje z niego kod i zapisuje do pliku .ll
+  - z wygenerowanego kodu .ll tworzy plik .bc przy pomocy llvm-as
+  - przy linkowaniu korzysta z pliku lib/runtime.bc
+  - nie korzysta z niestandardowych bibliotek

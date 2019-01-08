@@ -1,0 +1,12 @@
+void y (string x) {
+  while (true)
+    printString(x);
+  }
+}
+int main() {
+  int x = 0;
+
+  if (x == 42) {
+    y("forty two");
+  return 0;
+}

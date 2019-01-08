@@ -1,0 +1,11 @@
+int x(void y) {
+  return 0;
+}
+void y() {
+  return;
+}
+int main() {
+  int z = x(y());
+
+  return 0;
+}
