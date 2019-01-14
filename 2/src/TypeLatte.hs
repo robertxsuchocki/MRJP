@@ -29,6 +29,12 @@ argsIdents [] = []
 argsIdents ((Arg _ ident):args) = ident : (argsIdents args)
 
 
+topDefsIdents :: [TopDef] -> [Ident]
+
+topDefsIdents [] = []
+topDefsIdents ((FnDef _ ident _ _):tds) = ident : (topDefsIdents tds)
+
+
 itemsIdents :: [Item] -> [Ident]
 
 itemsIdents [] = []
@@ -60,7 +66,7 @@ uniqueIdents _ [] =
 uniqueIdents seen (ident@(Ident name):idents) = do
   if (elem ident seen)
     then do
-      tell ["Redeclaration of variable " ++ (show name)]
+      tell ["Redeclaration of a variable or function " ++ (show name)]
       return False
     else do
       rest <- uniqueIdents (ident:seen) idents
@@ -85,12 +91,13 @@ validProgram :: Program -> TypeWSIO Bool
 validProgram (Program tds) = do
   addBuiltins
   typeTopDefs tds
-  valid <- validTopDefs tds
-  main  <- validExpr Int (EApp (Ident "main") [])
+  valid  <- validTopDefs tds
+  unique <- uniqueIdents [] $ topDefsIdents tds
+  main   <- validExpr Int (EApp (Ident "main") [])
 
   when (not main) $ tell ["No valid main function"]
 
-  return $ valid && main
+  return $ valid && unique && main
 
 
 addBuiltins :: TypeWSIO ()
