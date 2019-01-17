@@ -83,8 +83,9 @@ initValue Str = do
   return lbl
 
 initValue tp = case tp of
-  Int  -> return "0"
-  Bool -> return "false"
+  Int   -> return "0"
+  Bool  -> return "false"
+  Cls _ -> return "null"
 
 
 retInitValue :: Type -> WSIO String
@@ -97,12 +98,17 @@ retInitValue tp = case tp of
   Int  -> return "ret i32 0"
   Bool -> return "ret i1 false"
   Void -> return "ret void"
+  Cls ident -> do
+    tname <- transType (Cls ident)
+    return $ "ret " ++ tname ++ " null"
 
 
 transProgram :: Program -> WSIO ()
 
 transProgram (Program tds) = do
-  declTopDefs tds
+  tellClsDefs tds
+  declClsDefs 0 tds
+  declFnDefs tds
   transTopDefs tds
 
 
@@ -123,15 +129,75 @@ argsTypeNames ((Arg tp (Ident name)):args) = do
   return (tname:rest)
 
 
-declTopDefs :: [TopDef] -> WSIO ()
+fieldsTypeNames :: [Field] -> WSIO [Lbl]
 
-declTopDefs [] =
+fieldsTypeNames [] = return []
+
+fieldsTypeNames ((Field tp idents):fs) = do
+  tname <- transType tp
+  let tnames = replicate (length idents) tname
+  rest  <- fieldsTypeNames fs
+  return (tnames ++ rest)
+
+
+declField :: Int -> Ident -> Field -> WSIO Int
+
+declField lp _ (Field _ []) = return lp
+
+declField lp (Ident cls) (Field tp ((Ident field):idents)) = do
+  let name = (cls ++ "." ++ field)
+  modify (\(m, l, s) -> ((M.insert name (tp, (show lp)) m), l, s))
+  declField (lp + 1) (Ident cls) (Field tp idents)
+
+
+tellClsDefs :: [TopDef] -> WSIO ()
+
+tellClsDefs [] =
   return ()
 
-declTopDefs ((FnDef tp (Ident name) args block):tds) = do
+tellClsDefs ((ClsDef ident fields):tds) = do
+  flist <- fieldsTypeNames fields
+  let fnames = intercalate ", " flist
+  tname <- transType (Cls ident)
+  tell [(init tname) ++ " = type {" ++ fnames ++ "}"]
+
+tellClsDefs (_:tds) =
+  return ()
+
+
+declClsDefs :: Int -> [TopDef] -> WSIO Int
+
+declClsDefs lp [] =
+  return lp
+
+declClsDefs lp ((ClsDef ident@(Ident name) []):tds) = do
+  let lbl = "%struct." ++ name
+  modify (\(m, l, s) -> ((M.insert name ((Cls ident), lbl) m), l, s))
+  new_lp <- declClsDefs lp tds
+  return new_lp
+
+declClsDefs lp ((ClsDef ident (f:fs)):tds) = do
+  lp1 <- declField lp ident f
+  lp2 <- declClsDefs lp1 ((ClsDef ident fs):tds)
+  return lp2
+
+declClsDefs lp (_:tds) = do
+  new_lp <- declClsDefs lp tds
+  return new_lp
+
+
+declFnDefs :: [TopDef] -> WSIO ()
+
+declFnDefs [] =
+  return ()
+
+declFnDefs ((FnDef tp (Ident name) args block):tds) = do
   let ftype = (Fun tp (argsTypes args))
   modify (\(m, l, s) -> ((M.insert name (ftype, name) m), l, s))
-  declTopDefs tds
+  declFnDefs tds
+
+declFnDefs (_:tds) =
+  declFnDefs tds
 
 
 transTopDefs :: [TopDef] -> WSIO ()
@@ -149,6 +215,9 @@ transTopDefs ((FnDef tp (Ident name) args block):tds) = do
   guard <- retInitValue tp
   tell [guard]
   tell ["}"]
+  transTopDefs tds
+
+transTopDefs (_:tds) =
   transTopDefs tds
 
 
@@ -215,6 +284,20 @@ transStmt (Ass ident@(Ident name) expr) = do
   (_, val)  <- transExpr expr
   tname     <- transType tp
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
+
+transStmt (FieldAss (Ident name) (Ident field) expr) = do
+  (ctp, clbl) <- transIdent (Ident name)
+  let (Cls (Ident cls)) = ctp
+  (ftp, flbl) <- transIdent (Ident (cls ++ "." ++ field))
+  ctname      <- transType ctp
+  ftname      <- transType ftp
+  (_, val)    <- transExpr expr
+  cls         <- getLbl
+  ptr         <- getLbl
+  tell [cls ++ " = load " ++ ctname ++ ", " ++ ctname ++ "* " ++ clbl]
+  tell [ptr ++ " = getelementptr " ++ (init ctname) ++ ", " ++ ctname ++ " "
+        ++ cls ++ ", i32 0, i32 " ++ flbl]
+  tell ["store " ++ ftname ++ " " ++ val ++ ", " ++ ftname ++ "* " ++ ptr]
 
 transStmt (Incr ident) =
   transStmt (Ass ident (EAdd (EVar ident) Plus (ELitInt 1)))
@@ -308,6 +391,7 @@ transType tp = case tp of
   Bool -> return "i1"
   Void -> return "void"
   Fun ftype atypes -> return $ show ftype
+  Cls (Ident name) -> return $ "%struct." ++ name ++ "*"
 
 
 transExpr :: Expr -> WSIO Val
@@ -327,6 +411,32 @@ transExpr (ELitTrue) =
 
 transExpr (ELitFalse) =
   return (Bool, "false")
+
+transExpr (ENewObj tp) = do
+  tname <- transType tp
+  loc   <- getLbl
+  lbl   <- getLbl
+  tell [loc ++ " = call noalias i8* @malloc(i32 8)"]
+  tell [lbl ++ " = bitcast i8* " ++ loc ++ " to " ++ tname]
+  return (tp, lbl)
+
+transExpr (ENull ident) = do
+  return ((Cls ident), "null")
+
+transExpr (EField (Ident name) (Ident field)) = do
+  (ctp, clbl) <- transIdent (Ident name)
+  let (Cls (Ident cls)) = ctp
+  (ftp, flbl) <- transIdent (Ident (cls ++ "." ++ field))
+  ctname      <- transType ctp
+  ftname      <- transType ftp
+  cls         <- getLbl
+  ptr         <- getLbl
+  val         <- getLbl
+  tell [cls ++ " = load " ++ ctname ++ ", " ++ ctname ++ "* " ++ clbl]
+  tell [ptr ++ " = getelementptr " ++ (init ctname) ++ ", " ++ ctname ++ " "
+        ++ cls ++ ", i32 0, i32 " ++ flbl]
+  tell [val ++ " = load " ++ ftname ++ ", " ++ ftname ++ "* " ++ ptr]
+  return (ftp, val)
 
 transExpr (EApp ident@(Ident name) exprs) = do
   ((Fun tp _), _)   <- transIdent ident
@@ -497,8 +607,11 @@ moveGlobals :: [String] -> [String]
 
 moveGlobals code = globals ++ rest
   where
-    globals = filter (isPrefixOf "@") code
-    rest = filter (\x -> not $ isPrefixOf "@" x) code
+    is_const = isPrefixOf "@"
+    is_struct = isPrefixOf "%struct."
+    func = \x -> is_const x || is_struct x
+    globals = filter (func) code
+    rest = filter (\x -> not (func x)) code
 
 
 run :: FilePath -> Program -> IO ()

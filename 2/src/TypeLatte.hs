@@ -33,6 +33,7 @@ topDefsIdents :: [TopDef] -> [Ident]
 
 topDefsIdents [] = []
 topDefsIdents ((FnDef _ ident _ _):tds) = ident : (topDefsIdents tds)
+topDefsIdents ((ClsDef ident _):tds) = ident : (topDefsIdents tds)
 
 
 itemsIdents :: [Item] -> [Ident]
@@ -40,6 +41,12 @@ itemsIdents :: [Item] -> [Ident]
 itemsIdents [] = []
 itemsIdents ((NoInit ident):its) = ident : (itemsIdents its)
 itemsIdents ((Init ident expr):its) = ident : (itemsIdents its)
+
+
+fieldsIdents :: [Field] -> [Ident]
+
+fieldsIdents [] = []
+fieldsIdents ((Field _ idents):fs) = idents ++ (fieldsIdents fs)
 
 
 stmtsIdents :: [Stmt] -> [Ident]
@@ -56,6 +63,26 @@ argsDecl [] = return ()
 argsDecl ((Arg tp (Ident name)):args) = do
   modify (M.insert name tp)
   argsDecl args
+
+
+fieldDecl :: Ident -> Field -> TypeWSIO ()
+
+fieldDecl _ (Field _ []) = return ()
+
+fieldDecl (Ident cls) (Field tp ((Ident field):idents)) = do
+  modify (M.insert (cls ++ "." ++ field) tp)
+  fieldDecl (Ident cls) (Field tp idents)
+
+
+clsDecl :: TopDef -> TypeWSIO ()
+
+clsDecl (ClsDef ident@(Ident name) []) = do
+  modify (M.insert name (Cls ident))
+
+clsDecl (ClsDef ident (f:fs)) = do
+  fieldDecl ident f
+  clsDecl (ClsDef ident fs)
+
 
 
 uniqueIdents :: [Ident] -> [Ident] -> TypeWSIO Bool
@@ -120,6 +147,9 @@ typeTopDefs ((FnDef tp (Ident name) args block):tds) = do
   modify (M.insert name ftype)
   typeTopDefs tds
 
+typeTopDefs ((ClsDef _ _):tds) =
+  typeTopDefs tds
+
 
 validTopDefs :: [TopDef] -> TypeWSIO Bool
 
@@ -136,6 +166,11 @@ validTopDefs (td:tds) = do
 
 
 validTopDef :: TopDef -> TypeWSIO Bool
+
+validTopDef cls@(ClsDef (Ident name) fields) = do
+  unique <- uniqueIdents [] $ fieldsIdents fields
+  clsDecl cls
+  return unique
 
 validTopDef (FnDef tp (Ident name) args block) = do
   let idents = argsIdents args
@@ -319,6 +354,17 @@ validStmt (Ass (Ident name) expr) = do
     Just tp -> validExpr tp expr
     _       -> return False
 
+validStmt (FieldAss (Ident name) (Ident field) expr) = do
+  store <- get
+  case M.lookup name store of
+    Just (Cls (Ident cls)) -> do
+      case M.lookup (cls ++ "." ++ field) store of
+        Just t -> do
+          valid <- validExpr t expr
+          return valid
+        _      -> return False
+    _ -> return False
+
 validStmt (Incr ident) =
   validIdent ident Int
 
@@ -375,10 +421,40 @@ validExprsAny (tp:tps) expr = do
     else validExprsAny tps expr
 
 
+identTypeFromExpr :: Expr -> TypeWSIO (Maybe Type)
+
+identTypeFromExpr (EVar (Ident name)) = do
+  store <- get
+  return $ M.lookup name store
+
+identTypeFromExpr (ENull ident) =
+  return $ Just (Cls ident)
+
+identTypeFromExpr _ =
+  return Nothing
+
+
+validClsExprs :: Expr -> Expr -> TypeWSIO Bool
+
+validClsExprs expr1 expr2 = do
+  tp1 <- identTypeFromExpr expr1
+  case tp1 of
+    (Just t) -> do
+      tp2 <- identTypeFromExpr expr2
+      return $ tp1 == tp2
+    _ -> return False
+
+
 validExpr :: Type -> Expr -> TypeWSIO Bool
 
 validExpr tp (EVar ident) =
   validIdent ident tp
+
+validExpr tp (ENull (Ident name)) = do
+  store <- get
+  case M.lookup name store of
+    Just t -> return (t == tp)
+    _      -> return False
 
 validExpr Int (ELitInt integer) =
   return True
@@ -388,6 +464,18 @@ validExpr Bool (ELitTrue) =
 
 validExpr Bool (ELitFalse) =
   return True
+
+validExpr tp1 (ENewObj tp2) =
+  return $ tp1 == tp2
+
+validExpr tp (EField (Ident name) (Ident field)) = do
+  store <- get
+  case M.lookup name store of
+    Just (Cls (Ident cls)) -> do
+      case M.lookup (cls ++ "." ++ field) store of
+        Just t -> return (t == tp)
+        _      -> return False
+    _ -> return False
 
 validExpr Str (EString string) =
   return True
@@ -408,9 +496,11 @@ validExpr Int (EMul expr1 mulop expr2) =
   validExprsAll [(Int, expr1), (Int, expr2)]
 
 validExpr Bool (ERel expr1 relop expr2) = do
-  int <- validExprsAll [(Int, expr1), (Int, expr2)]
+  int  <- validExprsAll [(Int, expr1), (Int, expr2)]
   bool <- validExprsAll [(Bool, expr1), (Bool, expr2)]
-  return $ int || bool
+  let op = (relop == EQU || relop == NE)
+  cls  <- validClsExprs expr1 expr2
+  return $ int || bool || (op && cls)
 
 validExpr Bool (EAnd expr1 expr2) =
   validExprsAll [(Bool, expr1), (Bool, expr2)]

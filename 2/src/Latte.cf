@@ -6,11 +6,19 @@ Program.   Program ::= [TopDef] ;
 
 FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
 
+ClsDef.    TopDef ::= "class" Ident "{" [Field] "}" ;
+
 separator nonempty TopDef "" ;
 
-Arg. 	   Arg ::= Type Ident;
+Arg. 	     Arg ::= Type Ident ;
 
 separator  Arg "," ;
+
+Field. 	   Field ::= Type [Ident] ";" ;
+
+separator  Ident "," ;
+
+separator  Field "" ;
 
 -- statements ----------------------------------------------
 
@@ -24,13 +32,15 @@ BStmt.     Stmt ::= Block ;
 
 Decl.      Stmt ::= Type [Item] ";" ;
 
-NoInit.    Item ::= Ident ; 
+NoInit.    Item ::= Ident ;
 
 Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
+
+FieldAss.  Stmt ::= Ident "." Ident "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
 
@@ -58,6 +68,8 @@ Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
 
+Cls.       Type ::= Ident ;
+
 internal   Fun. Type ::= Type "(" [Type] ")" ;
 
 separator  Type "," ;
@@ -66,11 +78,17 @@ separator  Type "," ;
 
 EVar.      Expr6 ::= Ident ;
 
+ENull.     Expr6 ::= "(" Ident ")" "null" ;
+
 ELitInt.   Expr6 ::= Integer ;
 
 ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
+
+ENewObj.   Expr6 ::= "new" Type ;
+
+EField.    Expr6 ::= Ident "." Ident ;
 
 EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
@@ -125,4 +143,3 @@ comment    "#" ;
 comment    "//" ;
 
 comment    "/*" "*/" ;
-
