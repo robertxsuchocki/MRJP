@@ -40,6 +40,8 @@ separator nonempty Item "," ;
 
 Ass.       Stmt ::= Ident "=" Expr  ";" ;
 
+ArrAss.    Stmt ::= Ident "[" Expr "]" "=" Expr  ";" ;
+
 FieldAss.  Stmt ::= Ident "." Ident "=" Expr  ";" ;
 
 Incr.      Stmt ::= Ident "++"  ";" ;
@@ -56,6 +58,8 @@ CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
+For.       Stmt ::= "for" "(" Type Ident ":" Ident ")" Stmt ;
+
 SExp.      Stmt ::= Expr  ";" ;
 
 -- Types ---------------------------------------------------
@@ -67,6 +71,8 @@ Str.       Type ::= "string" ;
 Bool.      Type ::= "boolean" ;
 
 Void.      Type ::= "void" ;
+
+Arr.       Type ::=  Type "[]" ;
 
 Cls.       Type ::= Ident ;
 
@@ -86,13 +92,17 @@ ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
 
-ENewObj.   Expr6 ::= "new" Type ;
-
-EField.    Expr6 ::= Ident "." Ident ;
-
 EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
 
 EString.   Expr6 ::= String ;
+
+EField.    Expr6 ::= Ident "." Ident ;
+
+ENewObj.   Expr6 ::= "new" Type ;
+
+ENewArr.   Expr6 ::= "new" Type "[" Expr "]" ;
+
+EValArr.   Expr6 ::= Ident "[" Expr "]" ;
 
 Neg.       Expr5 ::= "-" Expr6 ;
 

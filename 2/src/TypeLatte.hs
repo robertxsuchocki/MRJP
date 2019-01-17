@@ -304,6 +304,12 @@ hasReturnClause ((While expr stmt):ss) = do
     then return True
     else hasReturnClause ss
 
+hasReturnClause ((For _ _ _ stmt):ss) = do
+  valid <- hasReturnClause [stmt]
+  if (valid)
+    then return True
+    else hasReturnClause ss
+
 hasReturnClause (s:ss) = case s of
   Ret _    -> return True
   VRet     -> return True
@@ -354,6 +360,13 @@ validStmt (Ass (Ident name) expr) = do
     Just tp -> validExpr tp expr
     _       -> return False
 
+validStmt (ArrAss (Ident name) expr1 expr2) = do
+  store <- get
+  case M.lookup name store of
+    Just (Arr tp) ->
+      validExprsAll [(Int, expr1), (tp, expr2)]
+    _                -> return False
+
 validStmt (FieldAss (Ident name) (Ident field) expr) = do
   store <- get
   case M.lookup name store of
@@ -392,6 +405,14 @@ validStmt (While expr stmt) = do
   valid_e <- validExpr Bool expr
   valid_s <- validStmt stmt
   return (valid_e && valid_s)
+
+validStmt (For tp (Ident name1) ident2 stmt) = do
+  valid_i <- validIdent ident2 (Arr tp)
+  store  <- get
+  modify (M.insert name1 tp)
+  valid_s <- validStmt stmt
+  modify (\_ -> store)
+  return (valid_i && valid_s)
 
 validStmt (SExp expr) =
   validExprsAny [Int, Bool, Str, Void] expr
@@ -465,8 +486,22 @@ validExpr Bool (ELitTrue) =
 validExpr Bool (ELitFalse) =
   return True
 
-validExpr tp1 (ENewObj tp2) =
-  return $ tp1 == tp2
+validExpr tp (EApp (Ident name) exprs) = do
+  store <- get
+  case M.lookup name store of
+    Just (Fun t args) -> do
+      valid_a <- validArgs args exprs
+      return (t == tp && valid_a)
+    _                 -> return False
+
+validExpr Str (EString string) =
+  return True
+
+validExpr Int (EField (Ident name1) (Ident "length")) = do
+  store <- get
+  case M.lookup name1 store of
+    Just (Arr _) -> return True
+    _            -> return False
 
 validExpr tp (EField (Ident name) (Ident field)) = do
   store <- get
@@ -477,8 +512,19 @@ validExpr tp (EField (Ident name) (Ident field)) = do
         _      -> return False
     _ -> return False
 
-validExpr Str (EString string) =
-  return True
+validExpr tp1 (ENewObj tp2) =
+  return $ tp1 == tp2
+
+validExpr (Arr _) (ENewArr tp expr) =
+  validExpr Int expr
+
+validExpr tp (EValArr (Ident name) expr) = do
+  store <- get
+  case M.lookup name store of
+    Just (Arr t) -> do
+      valid <- validExpr Int expr
+      return (t == tp && valid)
+    _            -> return False
 
 validExpr Int (Neg expr) =
   validExpr Int expr
@@ -507,13 +553,5 @@ validExpr Bool (EAnd expr1 expr2) =
 
 validExpr Bool (EOr expr1 expr2) =
   validExprsAll [(Bool, expr1), (Bool, expr2)]
-
-validExpr tp (EApp (Ident name) exprs) = do
-  store <- get
-  case M.lookup name store of
-    Just (Fun t args) -> do
-      valid_a <- validArgs args exprs
-      return (t == tp && valid_a)
-    _                 -> return False
 
 validExpr _ _ = return False

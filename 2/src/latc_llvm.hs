@@ -88,19 +88,21 @@ initValue tp = case tp of
   Cls _ -> return "null"
 
 
-retInitValue :: Type -> WSIO String
+retInitValue :: Type -> WSIO ()
 
 retInitValue Str = do
   lbl <- emptyString
-  return $ "ret i8* " ++ lbl
+  tell ["ret i8* " ++ lbl]
 
 retInitValue tp = case tp of
-  Int  -> return "ret i32 0"
-  Bool -> return "ret i1 false"
-  Void -> return "ret void"
+  Int  -> tell ["ret i32 0"]
+  Bool -> tell ["ret i1 false"]
+  Void -> tell ["ret void"]
+  Arr etp -> do
+    tell ["ret %struct.array* null"]
   Cls ident -> do
-    tname <- transType (Cls ident)
-    return $ "ret " ++ tname ++ " null"
+    tname <- transStoredType (Cls ident)
+    tell ["ret " ++ tname ++ " null"]
 
 
 transProgram :: Program -> WSIO ()
@@ -123,8 +125,8 @@ argsTypeNames :: [Arg] -> WSIO [Lbl]
 
 argsTypeNames [] = return []
 
-argsTypeNames ((Arg tp (Ident name)):args) = do
-  tname <- transType tp
+argsTypeNames ((Arg tp _):args) = do
+  tname <- transStoredType tp
   rest  <- argsTypeNames args
   return (tname:rest)
 
@@ -134,7 +136,7 @@ fieldsTypeNames :: [Field] -> WSIO [Lbl]
 fieldsTypeNames [] = return []
 
 fieldsTypeNames ((Field tp idents):fs) = do
-  tname <- transType tp
+  tname <- transValType tp
   let tnames = replicate (length idents) tname
   rest  <- fieldsTypeNames fs
   return (tnames ++ rest)
@@ -158,7 +160,7 @@ tellClsDefs [] =
 tellClsDefs ((ClsDef ident fields):tds) = do
   flist <- fieldsTypeNames fields
   let fnames = intercalate ", " flist
-  tname <- transType (Cls ident)
+  tname <- transValType (Cls ident)
   tell [(init tname) ++ " = type {" ++ fnames ++ "}"]
 
 tellClsDefs (_:tds) =
@@ -206,14 +208,13 @@ transTopDefs [] =
   return ()
 
 transTopDefs ((FnDef tp (Ident name) args block):tds) = do
-  tname <- transType tp
+  tname <- transStoredType tp
   alist <- argsTypeNames args
   let anames = intercalate ", " alist
   tell ["define " ++ tname ++ " @" ++ name ++ "(" ++ anames ++ ") {"]
   declArgs args
   transBlock block
-  guard <- retInitValue tp
-  tell [guard]
+  retInitValue tp
   tell ["}"]
   transTopDefs tds
 
@@ -232,7 +233,7 @@ declArgs (args) = do
 declArg :: Int -> Arg -> WSIO ()
 
 declArg gap (Arg tp ident@(Ident name)) = do
-  tname <- transType tp
+  tname <- transStoredType tp
   loc   <- getLoc
   let lbl = "%" ++ show loc
   let val = "%" ++ (show $ loc - gap)
@@ -247,7 +248,7 @@ transArgs [] = return []
 
 transArgs (expr:exprs) = do
   (tp, val) <- transExpr expr
-  tname     <- transType tp
+  tname     <- transStoredType tp
   rest      <- transArgs exprs
   let name = tname ++ " " ++ val
   return (name:rest)
@@ -282,15 +283,29 @@ transStmt (Decl tp items) =
 transStmt (Ass ident@(Ident name) expr) = do
   (tp, lbl) <- transIdent ident
   (_, val)  <- transExpr expr
-  tname     <- transType tp
+  tname     <- transValType tp
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
+
+transStmt (ArrAss ident expr1 expr2) = do
+  (atp, _)   <- transIdent ident
+  (_, loc)   <- transExpr (EField ident (Ident "arr"))
+  (_, index) <- transExpr expr1
+  (etp, val) <- transExpr expr2
+  atname     <- transValType atp
+  etname     <- transValType etp
+  lbl        <- getLbl
+  ptr        <- getLbl
+  tell [lbl ++ " = bitcast i8* " ++ loc ++ " to " ++ atname]
+  tell [ptr ++ " = getelementptr " ++ etname ++ ", " ++ atname ++ " " ++ lbl ++
+        ", " ++ etname ++ " " ++ index]
+  tell ["store " ++ etname ++ " " ++ val ++ ", " ++ etname ++ "* " ++ ptr]
 
 transStmt (FieldAss (Ident name) (Ident field) expr) = do
   (ctp, clbl) <- transIdent (Ident name)
   let (Cls (Ident cls)) = ctp
   (ftp, flbl) <- transIdent (Ident (cls ++ "." ++ field))
-  ctname      <- transType ctp
-  ftname      <- transType ftp
+  ctname      <- transStoredType ctp
+  ftname      <- transValType ftp
   (_, val)    <- transExpr expr
   cls         <- getLbl
   ptr         <- getLbl
@@ -307,7 +322,7 @@ transStmt (Decr ident) =
 
 transStmt (Ret expr) = do
   (tp, val) <- transExpr expr
-  tname     <- transType tp
+  tname     <- transStoredType tp
   void $ getLbl
   tell ["ret " ++ tname ++ " " ++ val]
 
@@ -358,6 +373,20 @@ transStmt (While expr stmt) = do
 
   tell ["end" ++ next ++ ":"]
 
+transStmt (For tp (Ident var) (Ident arr) stmt) = do
+  let iter = (Ident $ var ++ ".iterator")
+  let len  = (EField (Ident arr) (Ident "length"))
+  let cond = (ERel (EVar iter) LTH len)
+  let set_x = (Ass (Ident var) (EValArr (Ident arr) (EVar iter)))
+  let inc_i = (Incr iter)
+  let block = (BStmt (Block [set_x, stmt, inc_i]))
+
+  (store, _, _) <- get
+  transItem tp (NoInit (Ident var))
+  transItem tp (Init iter (ELitInt 0))
+  transStmt (While cond block)
+  modify (\(_, l, s) -> (store, l, s))
+
 transStmt (SExp expr) =
   void $ transExpr expr
 
@@ -366,7 +395,7 @@ transItem :: Type -> Item -> WSIO ()
 
 transItem tp (NoInit ident@(Ident name)) = do
   val   <- initValue tp
-  tname <- transType tp
+  tname <- transStoredType tp
   lbl   <- getLbl
 
   modify (\(m, l, s) -> ((M.insert name (tp, lbl) m), l, s))
@@ -375,7 +404,7 @@ transItem tp (NoInit ident@(Ident name)) = do
 
 transItem tp (Init ident@(Ident name) expr) = do
   (_, val) <- transExpr expr
-  tname    <- transType tp
+  tname    <- transStoredType tp
   lbl      <- getLbl
 
   modify (\(m, l, s) -> ((M.insert name (tp, lbl) m), l, s))
@@ -383,22 +412,44 @@ transItem tp (Init ident@(Ident name) expr) = do
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
 
 
-transType :: Type -> WSIO String
+transValType :: Type -> WSIO String
 
-transType tp = case tp of
+transValType tp = case tp of
   Int  -> return "i32"
   Str  -> return "i8*"
   Bool -> return "i1"
   Void -> return "void"
   Fun ftype atypes -> return $ show ftype
+  Arr tp -> do
+    tname <- transValType tp
+    return $ tname ++ "*"
   Cls (Ident name) -> return $ "%struct." ++ name ++ "*"
+
+
+transStoredType :: Type -> WSIO String
+
+transStoredType tp = case tp of
+  Int  -> return "i32"
+  Str  -> return "i8*"
+  Bool -> return "i1"
+  Void -> return "void"
+  Fun ftype atypes -> return $ show ftype
+  Arr tp -> return "%struct.array*"
+  Cls (Ident name) -> return $ "%struct." ++ name ++ "*"
+
+
+transClsName :: Type -> WSIO String
+
+transClsName tp = case tp of
+  Cls (Ident name) -> return name
+  Arr tp           -> return "array"
 
 
 transExpr :: Expr -> WSIO Val
 
 transExpr (EVar ident) = do
   (tp, val) <- transIdent ident
-  tname     <- transType tp
+  tname     <- transStoredType tp
   lbl       <- getLbl
   tell [lbl ++ " = load " ++ tname ++ ", " ++ tname ++ "* " ++ val]
   return (tp, lbl)
@@ -413,7 +464,7 @@ transExpr (ELitFalse) =
   return (Bool, "false")
 
 transExpr (ENewObj tp) = do
-  tname <- transType tp
+  tname <- transStoredType tp
   loc   <- getLbl
   lbl   <- getLbl
   tell [loc ++ " = call noalias i8* @malloc(i32 8)"]
@@ -425,10 +476,10 @@ transExpr (ENull ident) = do
 
 transExpr (EField (Ident name) (Ident field)) = do
   (ctp, clbl) <- transIdent (Ident name)
-  let (Cls (Ident cls)) = ctp
-  (ftp, flbl) <- transIdent (Ident (cls ++ "." ++ field))
-  ctname      <- transType ctp
-  ftname      <- transType ftp
+  clsname     <- transClsName ctp
+  (ftp, flbl) <- transIdent (Ident (clsname ++ "." ++ field))
+  ctname      <- transStoredType ctp
+  ftname      <- transValType ftp
   cls         <- getLbl
   ptr         <- getLbl
   val         <- getLbl
@@ -440,7 +491,7 @@ transExpr (EField (Ident name) (Ident field)) = do
 
 transExpr (EApp ident@(Ident name) exprs) = do
   ((Fun tp _), _)   <- transIdent ident
-  tname             <- transType tp
+  tname             <- transStoredType tp
   alist             <- transArgs exprs
   let anames   = intercalate ", " alist
   let callFunc = "call " ++ tname ++ " @" ++ name ++ "(" ++ anames ++ ")"
@@ -460,6 +511,45 @@ transExpr (EString string) = do
   let loc = "%" ++ (drop 1 lbl)
   tell [loc ++ " = bitcast [" ++ len ++ " x i8]* " ++ lbl ++ " to i8*"]
   return (Str, loc)
+
+transExpr (ENewArr tp expr) = do
+  (_, val) <- transExpr (ENewObj (Cls (Ident "array")))
+
+  (_, num) <- transExpr expr
+  size     <- getLbl
+  tell [size ++ " = mul i32 " ++ num ++ ", 8"]
+
+  tname    <- transValType tp
+  lbl      <- getLbl
+  tell [lbl ++ " = call noalias i8* @malloc(i32 " ++ size ++ ")"]
+
+  arr      <- getLbl
+  tell [arr ++ " = getelementptr %struct.array, %struct.array* " ++ val
+        ++ ", i32 0, i32 0"]
+  tell ["store i8* " ++ lbl ++ ", i8** " ++ arr]
+
+  len      <- getLbl
+  tell [len ++ " = getelementptr %struct.array, %struct.array* " ++ val
+        ++ ", i32 0, i32 1"]
+  tell ["store i32 " ++ num ++ ", i32* " ++ len]
+
+  return ((Arr tp), val)
+
+transExpr (EValArr ident expr) = do
+  (atp, _)     <- transIdent ident
+  (_, loc)     <- transExpr (EField ident (Ident "arr"))
+  (etp, index) <- transExpr expr
+  atname <- transValType atp
+  etname <- transValType etp
+  lbl    <- getLbl
+  ptr    <- getLbl
+  val    <- getLbl
+  tell [lbl ++ " = bitcast i8* " ++ loc ++ " to " ++ atname]
+  tell [ptr ++ " = getelementptr " ++ etname ++ ", " ++ atname ++ " " ++ lbl ++
+        ", " ++ etname ++ " " ++ index]
+  tell [val ++ " = load " ++ (init atname) ++ ", " ++ atname ++ " " ++ ptr]
+  let (Arr tp) = atp
+  return (tp, val)
 
 transExpr (Neg expr) =
   transExpr (EAdd (ELitInt 0) Minus expr)
@@ -560,7 +650,7 @@ transOp :: String -> Expr -> Expr -> WSIO Lbl
 transOp op expr1 expr2 = do
   (tp, val1) <- transExpr expr1
   (_, val2)  <- transExpr expr2
-  tname      <- transType tp
+  tname      <- transValType tp
   lbl        <- getLbl
   tell [lbl ++ " = " ++ op ++ " " ++ tname ++ " " ++ val1 ++ ", " ++ val2]
   return lbl
@@ -587,7 +677,7 @@ transRelOp relop = case relop of
 
 pack :: [String] -> [String]
 
-pack code = globals ++ c_functions ++ builtins ++ code
+pack code = globals ++ c_functions ++ builtins ++ structs ++ code
   where
     globals = ["@.str.0 = constant [1 x i8] zeroinitializer"]
     c_functions = [
@@ -601,6 +691,7 @@ pack code = globals ++ c_functions ++ builtins ++ code
       "declare i32 @readInt()",
       "declare i8* @readString()",
       "declare void @error()"]
+    structs = ["%struct.array = type { i8*, i32 }"]
 
 
 moveGlobals :: [String] -> [String]
@@ -621,7 +712,10 @@ run file prog = do
                   ("printString", (Fun Void [Str], "@printString")),
                   ("error", (Fun Void [], "@error")),
                   ("readInt", (Fun Int [], "@readInt")),
-                  ("readString", (Fun Str [], "@readString"))]
+                  ("readString", (Fun Str [], "@readString")),
+                  ("array", (Cls (Ident "array"), "%struct.array")),
+                  ("array.arr", (Str, "0")),
+                  ("array.length", (Int, "1"))]
   let state = (M.fromList builtins, 0, 0)
   ((_, out), _) <- runStateT (runWriterT (transProgram prog)) state
   let code = intercalate "\n" $ moveGlobals $ pack out
