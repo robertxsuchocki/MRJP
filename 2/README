@@ -3,6 +3,13 @@ Robert Suchocki
 
 Zadanie 2 - kompilator Latte
 
+Zakres:
+  1. front-end
+  2. back-end LLVM
+  6. rozszerzenia:
+    1. tablice
+    2. struktury
+
 Zawartość:
   - README
   - Makefile
@@ -31,3 +38,9 @@ src/insc_llvm.hs:
   - z wygenerowanego kodu .ll tworzy plik .bc przy pomocy llvm-as
   - przy linkowaniu korzysta z pliku lib/runtime.bc
   - nie korzysta z niestandardowych bibliotek
+
+rozszerzenia:
+  - tablice i struktury (2 + 2)
+  - typy (Arr, Cls), deklaracje (ClsDef, Field), instrukcje (ArrAss, FieldAss, For),
+    wyrażenia (ENull, EField, ENewObj, ENewArr, EValArr) w gramatyce języka
+  - tablice jako struct z tablicą jako array.arr i długością jako array.length
