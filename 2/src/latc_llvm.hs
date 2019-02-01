@@ -212,9 +212,11 @@ transTopDefs ((FnDef tp (Ident name) args block):tds) = do
   alist <- argsTypeNames args
   let anames = intercalate ", " alist
   tell ["define " ++ tname ++ " @" ++ name ++ "(" ++ anames ++ ") {"]
+  (store, _, _) <- get
   declArgs args
   transBlock block
   retInitValue tp
+  modify (\(_, l, s) -> (store, l, s))
   tell ["}"]
   transTopDefs tds
 
@@ -283,7 +285,7 @@ transStmt (Decl tp items) =
 transStmt (Ass ident@(Ident name) expr) = do
   (tp, lbl) <- transIdent ident
   (_, val)  <- transExpr expr
-  tname     <- transValType tp
+  tname     <- transStoredType tp
   tell ["store " ++ tname ++ " " ++ val ++ ", " ++ tname ++ "* " ++ lbl]
 
 transStmt (ArrAss ident expr1 expr2) = do

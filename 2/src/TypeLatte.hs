@@ -515,8 +515,9 @@ validExpr tp (EField (Ident name) (Ident field)) = do
 validExpr tp1 (ENewObj tp2) =
   return $ tp1 == tp2
 
-validExpr (Arr _) (ENewArr tp expr) =
-  validExpr Int expr
+validExpr (Arr tp1) (ENewArr tp2 expr) = do
+  len <- validExpr Int expr
+  return $ (tp1 == tp2) && len
 
 validExpr tp (EValArr (Ident name) expr) = do
   store <- get
